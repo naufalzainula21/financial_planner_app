@@ -6,7 +6,7 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 
 | Tab | Features |
 |---|---|
-| **Home** | Get-started checklist for new users, purple card with total balance (sum of all pockets) and this month's income / expenses, Pockets row (Bank Jago, BCA, GoPay, OVO + your own) with each balance, "Spent this month" card with budget progress, goals progress, recent transactions |
+| **Home** | Get-started checklist for new users, purple card with total balance (sum of all pockets) and this month's income / expenses, Pockets row (Bank Jago, BCA, GoPay, OVO + your own) with each balance, "Spent this month" card with 3 swipeable slides (budget progress, spending pace chart vs budget, spending by category donut), goals progress, recent transactions |
 | **Transactions** | Search, round category filters (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
 | **Monthly cycle** | A "month" runs from your payday (default the 25th: 25 Oct – 24 Nov). Change it in the data sheet → "Month starts on". Used by Home, budgets, Stats and the 50/30/20 check. |
 | **Sign-in page** | Shown before entering the app on the live site: sign in or create an account. Each account's data is private. |
@@ -111,7 +111,7 @@ npx wrangler pages dev . --d1 DB=jon-pocket-local
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v10'` to `'rencana-v11'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v11'` to `'rencana-v12'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.

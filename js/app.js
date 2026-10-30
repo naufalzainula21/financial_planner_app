@@ -204,6 +204,157 @@ function areaChart(values, labels, highlightLabel) {
     </svg>`;
 }
 
+
+/* ---------- "Spent this month" slides: Budget · Pace · Categories ---------- */
+let homeSlide = 0;
+const SLIDE_NAMES = ['Budget', 'Spending pace', 'By category'];
+
+function budgetSlide(b, noBudget, budgetMsg, topBudgets) {
+  if (noBudget) {
+    return `
+      <button type="button" class="tile-btn" data-action="add-budget" style="background:var(--primary-50);border:0;width:100%">
+        <span class="stack" style="gap:0"><span class="t-strong">Set a monthly budget</span><span class="t-small">See how much you can still spend</span></span>${svg('chev', 'class="chev"')}
+      </button>`;
+  }
+  return `
+    ${bar(b.p, b.p >= 100 ? 'var(--neg)' : b.p >= 90 ? '#F29E0C' : '')}
+    <span class="t-small" style="color:${b.p >= 100 ? 'var(--neg)' : 'var(--ink-2)'}">${budgetMsg}</span>
+    <div class="stack" style="gap:10px;padding-top:4px">
+      ${topBudgets.map(([cat, limit]) => {
+        const sp = b.spent[cat] || 0, p = pct(sp, limit), c = CATEGORIES[cat] || CATEGORIES.other;
+        return `<div class="row" style="gap:10px">${catTile(cat, true)}<div class="grow stack" style="gap:5px">
+          <div class="between"><span class="t-body" style="font-weight:500">${esc(c.short)}</span><span class="t-small" style="color:${p >= 90 ? 'var(--neg)' : 'var(--muted)'}">${idrShort(sp)} / ${idrShort(limit)}</span></div>
+          ${bar(p, p >= 90 ? 'var(--neg)' : c.color, 'thin')}</div></div>`;
+      }).join('')}
+    </div>`;
+}
+
+function paceSlide(b, noBudget) {
+  const r = currentCycle();
+  const days = Math.round((r.end - r.start) / DAY) + 1;
+  const todayIdx = Math.min(days - 1, Math.round((toDate(isoDate(now())) - r.start) / DAY));
+  const daily = new Array(days).fill(0);
+  for (const t of monthTx()) if (t.type === 'expense') {
+    const i = Math.round((toDate(t.date) - r.start) / DAY);
+    if (i >= 0 && i < days) daily[i] += t.amount;
+  }
+  const W = 300, H = 130, top = 14, bottom = 20, left = 2, right = 2;
+  const x = (i) => left + (i / Math.max(1, days - 1)) * (W - left - right);
+  const fmtTick = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const spentSoFar = daily.slice(0, todayIdx + 1).reduce((a, v) => a + v, 0);
+  const avg = spentSoFar / (todayIdx + 1);
+
+  if (noBudget) {
+    // Daily bars with an average line
+    const max = Math.max(1, ...daily) * 1.15;
+    const y = (v) => top + (H - top - bottom) * (1 - v / max);
+    const bw = Math.max(2, (W - left - right) / days - 2);
+    const peak = daily.indexOf(Math.max(...daily));
+    return `
+      <svg viewBox="0 0 ${W} ${H}" class="mini-chart" role="img" aria-label="Spending per day this month">
+        ${daily.map((v, i) => i <= todayIdx ? `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - bottom - y(v)).toFixed(1)}" rx="2" fill="${i === todayIdx ? 'var(--primary)' : 'var(--primary-100)'}"/>` : '').join('')}
+        ${avg > 0 ? `<line x1="${left}" x2="${W - right}" y1="${y(avg).toFixed(1)}" y2="${y(avg).toFixed(1)}" stroke="#F29E0C" stroke-dasharray="4 4" stroke-width="1.5"/>` : ''}
+        <text x="${left}" y="${H - 4}" class="tick">${fmtTick(r.start)}</text>
+        <text x="${W - right}" y="${H - 4}" class="tick" text-anchor="end">${fmtTick(r.end)}</text>
+      </svg>
+      <div class="legend-row"><span><i class="key" style="background:#F29E0C"></i>Average ${money(avg, true)}/day</span>
+        ${Math.max(...daily) > 0 ? `<span>Highest ${money(daily[peak], true)} · ${fmtTick(new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() + peak))}</span>` : ''}</div>`;
+  }
+
+  // Cumulative spending vs an even budget pace
+  const cum = []; let run = 0;
+  for (let i = 0; i <= todayIdx; i++) { run += daily[i]; cum.push(run); }
+  const max = Math.max(b.total, run) * 1.1 || 1;
+  const y = (v) => top + (H - top - bottom) * (1 - v / max);
+  const line = cum.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const pace = b.total * ((todayIdx + 1) / days);
+  const diff = run - pace;
+  const ahead = diff > 0;
+  return `
+    <svg viewBox="0 0 ${W} ${H}" class="mini-chart" role="img" aria-label="Spending so far compared with your budget pace">
+      <line x1="${left}" x2="${W - right}" y1="${y(b.total).toFixed(1)}" y2="${y(b.total).toFixed(1)}" stroke="var(--line-strong)" stroke-width="1"/>
+      <text x="${W - right}" y="${(y(b.total) - 4).toFixed(1)}" class="tick" text-anchor="end">Budget ${money(b.total, true)}</text>
+      <line x1="${x(0)}" y1="${y(0)}" x2="${x(days - 1)}" y2="${y(b.total).toFixed(1)}" stroke="#A3A3B8" stroke-dasharray="4 4" stroke-width="1.5"/>
+      <path d="${line} L${x(todayIdx).toFixed(1)},${y(0)} L${x(0)},${y(0)} Z" fill="var(--primary)" opacity="0.12"/>
+      <path d="${line}" fill="none" stroke="${ahead ? 'var(--neg)' : 'var(--primary)'}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(todayIdx).toFixed(1)}" cy="${y(run).toFixed(1)}" r="4.5" fill="#fff" stroke="${ahead ? 'var(--neg)' : 'var(--primary)'}" stroke-width="2.5"/>
+      <text x="${left}" y="${H - 4}" class="tick">${fmtTick(r.start)}</text>
+      <text x="${W - right}" y="${H - 4}" class="tick" text-anchor="end">${fmtTick(r.end)}</text>
+    </svg>
+    <div class="legend-row"><span><i class="key" style="background:${ahead ? 'var(--neg)' : 'var(--primary)'}"></i>Spent so far</span><span><i class="key dashed"></i>Even pace</span></div>
+    <span class="t-small" style="color:${ahead ? 'var(--neg)' : 'var(--ink-2)'}">${run === 0 ? 'No spending yet this month.'
+      : ahead ? `${money(diff)} ahead of pace. Slow down to ${money(Math.max(0, b.total - run) / Math.max(1, days - todayIdx - 1), true)}/day to stay on budget.`
+      : `${money(-diff)} under pace. Average so far ${money(avg, true)}/day.`}</span>`;
+}
+
+function categorySlide() {
+  const by = Object.entries(spentByCat(monthTx())).sort((a, z) => z[1] - a[1]);
+  const total = by.reduce((a, [, v]) => a + v, 0);
+  if (!total) return '<p class="empty" style="padding:28px 0">No spending yet this month.</p>';
+  const top = by.slice(0, 4);
+  const rest = by.slice(4).reduce((a, [, v]) => a + v, 0);
+  const parts = rest ? [...top, ['__rest', rest]] : top;
+  const R = 46, C = 2 * Math.PI * R;
+  let off = 0;
+  const arcs = parts.map(([cat, v]) => {
+    const len = (v / total) * C;
+    const color = cat === '__rest' ? '#D8D8E4' : (CATEGORIES[cat]?.color || '#A3A3B8');
+    const a = `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${color}" stroke-width="16" stroke-dasharray="${Math.max(0, len - 1.5).toFixed(2)} ${(C - Math.max(0, len - 1.5)).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`;
+    off += len;
+    return a;
+  }).join('');
+  const biggest = monthTx().filter((t) => t.type === 'expense').sort((a, z) => z.amount - a.amount)[0];
+  return `
+    <div class="row" style="gap:16px;align-items:center">
+      <svg viewBox="0 0 120 120" class="donut" role="img" aria-label="Spending by category">
+        <g transform="rotate(-90 60 60)">${arcs}</g>
+        <text x="60" y="57" text-anchor="middle" class="donut-label">Total</text>
+        <text x="60" y="73" text-anchor="middle" class="donut-value">${state.prefs.hide ? '••••' : idrShort(total).replace('Rp ', '')}</text>
+      </svg>
+      <div class="grow stack" style="gap:8px">
+        ${parts.map(([cat, v]) => `<div class="between" style="gap:6px"><span class="row t-small" style="gap:6px;color:var(--ink-2);min-width:0"><i class="key" style="background:${cat === '__rest' ? '#D8D8E4' : (CATEGORIES[cat]?.color || '#A3A3B8')}"></i><span class="ellipsis">${cat === '__rest' ? 'Others' : esc(CATEGORIES[cat]?.short || cat)}</span></span><span class="t-small" style="font-weight:600;color:var(--ink)">${pct(v, total)}%</span></div>`).join('')}
+      </div>
+    </div>
+    ${biggest ? `<span class="t-small" style="color:var(--ink-2)">Biggest expense: <b>${esc(biggest.name)}</b> · ${money(biggest.amount)}</span>` : ''}`;
+}
+
+function spentSlides(m, b, noBudget, budgetMsg, topBudgets) {
+  const slides = [budgetSlide(b, noBudget, budgetMsg, topBudgets), paceSlide(b, noBudget), categorySlide()];
+  const names = noBudget ? ['Budget', 'Daily spending', 'By category'] : SLIDE_NAMES;
+  return `
+    <div class="slides" id="spent-slides" aria-roledescription="carousel" aria-label="Spending details">
+      ${slides.map((html, i) => `<div class="slide stack" role="group" aria-roledescription="slide" aria-label="${names[i]} (${i + 1} of 3)" style="gap:10px">
+        <span class="slide-title">${names[i]}</span>${html}</div>`).join('')}
+    </div>
+    <div class="dots" role="tablist" aria-label="Choose a slide">
+      ${names.map((n, i) => `<button type="button" class="dot" role="tab" data-action="spent-slide" data-value="${i}" aria-label="${n}" aria-selected="${i === homeSlide}"></button>`).join('')}
+    </div>`;
+}
+
+function fitSlides(i) {
+  const el = $('#spent-slides');
+  const slide = el?.children[i];
+  if (slide) el.style.height = slide.offsetHeight + 'px';
+}
+function initSlides() {
+  const el = $('#spent-slides');
+  if (!el) return;
+  el.scrollLeft = homeSlide * el.clientWidth;
+  fitSlides(homeSlide);
+  let t;
+  el.addEventListener('scroll', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+      fitSlides(i);
+      if (i !== homeSlide) {
+        homeSlide = i;
+        document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
+      }
+    }, 60);
+  }, { passive: true });
+}
+
 /* =========================================================
    Pages
    ========================================================= */
@@ -280,26 +431,13 @@ const PAGES = {
         </button>
       </div>
 
-      <section class="card lg stack" aria-label="Spent this month" style="gap:12px">
+      <section class="card lg stack" aria-label="Spent this month" style="gap:12px;overflow:hidden">
         <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
         <div class="between" style="align-items:flex-end">
           <span class="t-stat">${money(m.expense)}</span>
           ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
         </div>
-        ${noBudget ? `
-          <button type="button" class="tile-btn" data-action="add-budget" style="background:var(--primary-50);border:0">
-            <span class="stack" style="gap:0"><span class="t-strong">Set a monthly budget</span><span class="t-small">See how much you can still spend</span></span>${svg('chev', 'class="chev"')}
-          </button>` : `
-          ${bar(b.p, b.p >= 100 ? 'var(--neg)' : b.p >= 90 ? '#F29E0C' : '')}
-          <span class="t-small" style="color:${b.p >= 100 ? 'var(--neg)' : 'var(--ink-2)'}">${budgetMsg}</span>
-          <div class="stack" style="gap:10px;padding-top:4px">
-            ${topBudgets.map(([cat, limit]) => {
-              const sp = b.spent[cat] || 0, p = pct(sp, limit), c = CATEGORIES[cat] || CATEGORIES.other;
-              return `<div class="row" style="gap:10px">${catTile(cat, true)}<div class="grow stack" style="gap:5px">
-                <div class="between"><span class="t-body" style="font-weight:500">${esc(c.short)}</span><span class="t-small" style="color:${p >= 90 ? 'var(--neg)' : 'var(--muted)'}">${idrShort(sp)} / ${idrShort(limit)}</span></div>
-                ${bar(p, p >= 90 ? 'var(--neg)' : c.color, 'thin')}</div></div>`;
-            }).join('')}
-          </div>`}
+        ${spentSlides(m, b, noBudget, budgetMsg, topBudgets)}
       </section>
 
       <section class="card lg stack" aria-label="Goals" style="gap:12px">
@@ -652,6 +790,7 @@ function render() {
   view.innerHTML = page.html;
   view.dataset.tab = currentTab;
   view.scrollTop = keepScroll;
+  if (currentTab === 'home') initSlides();
   document.title = `${page.title || 'Home'} · Jon Pocket`;
   document.querySelectorAll('.tabbar a').forEach((a) => {
     if (a.dataset.tab === currentTab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -1236,6 +1375,13 @@ const ACTIONS = {
   'close-sheet': closeSheet,
   'toggle-hide': () => { state.prefs.hide = !state.prefs.hide; commit(state.prefs.hide ? 'Amounts hidden' : ''); },
   'cat-filter': (el) => { state.prefs.catFilter = el.dataset.value; activitySearch = ''; save(state); location.hash = '#/activity'; },
+  'spent-slide': (el) => {
+    const box = $('#spent-slides'); const i = Number(el.dataset.value);
+    homeSlide = i;
+    document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
+    fitSlides(i);
+    if (box) box.scrollTo({ left: i * box.clientWidth, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  },
   'manage-pockets': managePockets,
   'open-pocket': (el) => openPocket(el.dataset.id),
   'add-pocket': () => pocketForm(null),

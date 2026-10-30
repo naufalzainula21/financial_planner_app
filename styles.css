@@ -171,6 +171,23 @@ svg { display: block; }
 .cat-btn:active .circle { transform: scale(0.94); }
 .cat-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Spent this month slides */
+.slides { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; margin: 0 -20px; align-items: flex-start; transition: height 0.25s ease; }
+.slides::-webkit-scrollbar { display: none; }
+.slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; padding: 0 20px; }
+.slide-title { font-size: 12px; font-weight: 600; color: var(--primary); letter-spacing: 0.3px; text-transform: uppercase; }
+.dots { display: flex; justify-content: center; gap: 2px; margin-top: -4px; }
+.dot { width: 28px; height: 24px; border: 0; background: none; padding: 0; display: flex; align-items: center; justify-content: center; }
+.dot::before { content: ""; width: 7px; height: 7px; border-radius: 4px; background: var(--line-strong); transition: width 0.2s, background 0.2s; }
+.dot[aria-selected="true"]::before { width: 20px; background: var(--primary); }
+.mini-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.mini-chart .tick { font-family: var(--font); font-size: 10px; fill: var(--muted); }
+.legend-row .key, .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; flex-shrink: 0; }
+.key.dashed { background: none; border-top: 2px dashed #A3A3B8; height: 0; border-radius: 0; width: 14px; vertical-align: 3px; }
+.donut { width: 120px; height: 120px; flex-shrink: 0; }
+.donut-label { font-family: var(--font); font-size: 10px; fill: var(--muted); }
+.donut-value { font-family: var(--font); font-size: 15px; font-weight: 700; fill: var(--ink); }
+
 /* Pockets */
 .content { overflow-x: hidden; }
 .pocket-row { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; margin: 0 -20px; padding: 0 20px; }

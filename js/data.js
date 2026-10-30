@@ -18,6 +18,12 @@ export function emptyState() {
   };
 }
 
+/** Drop records that are missing what the app needs, so one bad entry can't break a screen. */
+export const validTx = (t) => !!t && typeof t.id === 'string' && (t.type === 'income' || t.type === 'expense')
+  && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && Number(t.amount) > 0;
+export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name === 'string'
+  && Number(g.target) > 0 && typeof g.due === 'string' && /^\d{4}-\d{2}$/.test(g.due);
+
 /** The part of the state that is synced to the cloud. */
 export function toDoc(s) {
   return {
@@ -46,8 +52,8 @@ export function mergeDocs(a, b) {
   const aB = a.budgetsU || 0, bB = b.budgetsU || 0;
   const aN = a.nameU || 0, bN = b.nameU || 0;
   return {
-    transactions: list(a.transactions, b.transactions),
-    goals: list(a.goals, b.goals),
+    transactions: list(a.transactions, b.transactions).filter(validTx),
+    goals: list(a.goals, b.goals).filter(validGoal),
     budgets: (aB >= bB ? a.budgets : b.budgets) || {},
     budgetsU: Math.max(aB, bB),
     deleted,
@@ -73,8 +79,8 @@ export function load() {
       if (s && s.v === 2) {
         return {
           ...emptyState(), ...s,
-          transactions: Array.isArray(s.transactions) ? s.transactions : [],
-          goals: Array.isArray(s.goals) ? s.goals : [],
+          transactions: Array.isArray(s.transactions) ? s.transactions.filter(validTx) : [],
+          goals: Array.isArray(s.goals) ? s.goals.filter(validGoal) : [],
           budgets: s.budgets && typeof s.budgets === 'object' ? s.budgets : {},
           deleted: s.deleted && typeof s.deleted === 'object' ? s.deleted : {},
           prefs: { ...DEFAULT_PREFS, ...s.prefs }

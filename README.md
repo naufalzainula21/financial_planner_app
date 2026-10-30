@@ -8,7 +8,8 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 |---|---|
 | **Home** | Get-started checklist for new users, welcome header, purple "Spent" card with ring progress, balance / income / saved, round category shortcuts, budget tip banner, recent transactions |
 | **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
-| **Account** (tap the logo, or Transactions → sliders) | Sign in / create account, cloud backup and sync across devices, sync now, sign out |
+| **Sign-in page** | Shown before entering the app on the live site: sign in or create an account. Each account's data is private. |
+| **Account** (tap the logo, or Transactions → sliders) | Cloud sync status, sync now, sign out |
 | **+ (centre)** | Add income or expense |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
 | **Plan** | Budgets (ring, daily allowance, per-category limits), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
@@ -97,9 +98,9 @@ The tables are created automatically on first use.
 ```bash
 npx wrangler pages dev . --d1 DB=jon-pocket-local
 ```
-(Live Server works too, but without sign-in.)
+(Live Server works too: without the server it skips the sign-in page and saves on the device only.)
 
-**How syncing works:** every change is saved on the device, then uploaded about a second later. Each transaction and goal carries an edit time, so if two devices change things at the same time the app merges them item by item (newest edit wins, deletions are kept). Passwords are hashed (PBKDF2), sessions use an HttpOnly cookie for 90 days, and repeated wrong passwords are blocked for 15 minutes.
+**How syncing works:** every change is saved on the device, then uploaded about a second later. Each transaction and goal carries an edit time, so if two devices change things at the same time the app merges them item by item (newest edit wins, deletions are kept). Each account only ever reads and writes its own data. Signing out clears the device, and if a different account signs in on the same device, anything left from the previous account is removed first. Passwords are hashed (PBKDF2), sessions use an HttpOnly cookie for 90 days, and repeated wrong passwords are blocked for 15 minutes.
 
 ## Install on a phone
 - **iPhone (Safari):** open your `.pages.dev` link → Share → **Add to Home Screen**.
@@ -108,7 +109,7 @@ npx wrangler pages dev . --d1 DB=jon-pocket-local
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v5'` to `'rencana-v6'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v6'` to `'rencana-v7'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.

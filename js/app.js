@@ -934,7 +934,7 @@ const ACTIONS = {
     closeSheet(); commit('All data deleted');
   }),
   'open-auth': () => authSheet('signin'),
-  'auth-mode': (el) => authSheet(el.dataset.value, true),
+  'auth-mode': (el) => (gateEl.hidden ? authSheet(el.dataset.value, true) : showGate(el.dataset.value)),
   'sync-now': () => { syncNow(true); },
   'sign-out': () => askConfirm('Sign out?', 'Your data stays safe in your account. It will be removed from this device until you sign in again.', 'Sign out', signOut),
   'open-income': () => { txSheet(); txDraft.type = 'income'; txDraft.method = 'Bank transfer'; drawTxSheet(); },
@@ -1010,13 +1010,16 @@ window.addEventListener('storage', (e) => { if (e.key === STORAGE_KEY) { state =
 const cloud = {
   available: window.RENCANA_PREVIEW ? false : null, // null = not checked yet
   reason: '', needsCode: false,
-  email: null, version: 0, status: 'idle', lastSync: 0, lastPushed: ''
+  email: null, owner: null, version: 0, status: 'idle', lastSync: 0, lastPushed: ''
 };
 {
   const meta = loadCloudMeta();
-  if (meta.email && !window.RENCANA_PREVIEW) { cloud.email = meta.email; cloud.version = meta.version || 0; cloud.lastSync = meta.lastSync || 0; }
+  if (!window.RENCANA_PREVIEW) {
+    cloud.owner = meta.owner || meta.email || null;
+    if (meta.email) { cloud.email = meta.email; cloud.version = meta.version || 0; cloud.lastSync = meta.lastSync || 0; }
+  }
 }
-const persistMeta = () => saveCloudMeta(cloud.email ? { email: cloud.email, version: cloud.version, lastSync: cloud.lastSync } : {});
+const persistMeta = () => saveCloudMeta({ email: cloud.email || null, owner: cloud.owner || null, version: cloud.email ? cloud.version : 0, lastSync: cloud.email ? cloud.lastSync : 0 });
 
 function syncLabel() {
   if (cloud.status === 'syncing') return 'Syncing…';
@@ -1111,51 +1114,104 @@ async function syncNow(manual) {
 
 function sessionExpired() {
   cloud.email = null; cloud.version = 0; persistMeta(); setStatus('idle');
-  toast('Your session ended. Sign in again to keep syncing.');
+  showGate('signin', 'Your session ended. Sign in again to continue.');
 }
 
 async function checkCloud() {
   if (window.RENCANA_PREVIEW) return;
   try {
     const me = await api('me');
-    if (!me.json) { cloud.available = false; cloud.reason = 'missing'; refreshCloudUi(); return; }
-    if (me.status === 503) { cloud.available = false; cloud.reason = me.data.code || 'no_db'; refreshCloudUi(); return; }
+    if (!me.json) { cloud.available = false; cloud.reason = 'missing'; refreshCloudUi(); hideGate(); return; }
+    if (me.status === 503) { cloud.available = false; cloud.reason = me.data.code || 'no_db'; refreshCloudUi(); hideGate(); return; }
     cloud.available = true;
     cloud.needsCode = !!me.data.needsCode;
     if (me.data.signedIn) {
-      cloud.email = me.data.email; persistMeta();
+      if (cloud.owner && cloud.owner !== me.data.email) wipeLocal();
+      cloud.email = me.data.email; cloud.owner = me.data.email; persistMeta();
+      hideGate(); render();
       syncNow(false);
     } else if (cloud.email) {
       sessionExpired();
+    } else {
+      showGate('signin');
     }
     refreshCloudUi();
-    if (currentTab === 'home') render();
   } catch (e) {
-    // offline or no server: keep working locally
+    // offline or no server
     if (cloud.email) setStatus('offline');
+    else showGate('signin', 'You’re offline. Connect to the internet to sign in.');
   }
 }
 
-let authMode = 'signin';
-function authSheet(mode = 'signin', redraw = false) {
-  authMode = mode;
+/* ---------- Sign-in front page ---------- */
+const gateEl = document.createElement('div');
+gateEl.className = 'gate';
+gateEl.id = 'gate';
+gateEl.hidden = true;
+$('#app').appendChild(gateEl);
+
+function authFormHtml(mode, note, intro) {
   const create = mode === 'create';
-  const body = `
+  return `
     <form id="auth-form" class="stack" style="gap:16px" novalidate>
       ${seg([['signin', 'Sign in'], ['create', 'Create account']], 'auth-mode', mode)}
-      <p class="t-body" style="color:var(--ink-2)">${create
-        ? 'Create an account to back up your data. Anything already on this device will be added to it.'
-        : 'Sign in to load your data. Anything on this device will be merged with your account.'}</p>
+      ${note ? `<p class="t-small" style="color:var(--primary-700);background:var(--primary-50);padding:10px 12px;border-radius:12px">${esc(note)}</p>` : ''}
+      ${intro ? `<p class="t-body" style="color:var(--ink-2)">${intro}</p>` : ''}
       <label class="field"><span>Email</span><input class="input" type="email" name="email" id="auth-email" autocomplete="email" inputmode="email" required></label>
       <label class="field"><span>Password${create ? ' (at least 8 characters)' : ''}</span><input class="input" type="password" name="password" id="auth-password" autocomplete="${create ? 'new-password' : 'current-password'}" minlength="8" required></label>
       ${create && cloud.needsCode ? '<label class="field"><span>Invite code</span><input class="input" name="code" id="auth-code" autocomplete="off" required></label>' : ''}
       <p class="t-small neg" id="auth-error" role="alert"></p>
       <button type="submit" class="btn primary" id="auth-submit">${create ? 'Create account' : 'Sign in'}</button>
     </form>`;
+}
+
+let gateNote = '';
+function showGate(mode = 'signin', note) {
+  if (window.RENCANA_PREVIEW) return;
+  authMode = mode;
+  if (note !== undefined) gateNote = note;
+  const keepEmail = $('#auth-email')?.value || '';
+  closeSheet();
+  const loading = cloud.available === null && !gateNote;
+  gateEl.innerHTML = `
+    <div class="gate-hero">
+      <div class="gate-logo" aria-hidden="true"><span class="logo-n">n</span><span class="logo-dot"></span></div>
+      <h1>Jon Pocket</h1>
+      <p>Track your spending, plan budgets and grow your savings.</p>
+    </div>
+    <div class="gate-card">
+      ${loading ? '<p class="t-label" style="text-align:center;padding:24px 0">Loading…</p>' : authFormHtml(mode, gateNote)}
+      <p class="t-small" style="text-align:center">Your data is private to your account. Nobody else can see it.</p>
+    </div>`;
+  gateEl.hidden = false;
+  sheetSubmit = submitAuth;
+  if (keepEmail && $('#auth-email')) $('#auth-email').value = keepEmail;
+}
+function hideGate() {
+  if (gateEl.hidden) return;
+  gateEl.hidden = true;
+  gateEl.innerHTML = '';
+  gateNote = '';
+  sheetSubmit = null;
+}
+
+let authMode = 'signin';
+function authSheet(mode = 'signin', redraw = false) {
+  authMode = mode;
+  const body = authFormHtml(mode, '', mode === 'create'
+    ? 'Create an account to back up your data. Anything already on this device will be added to it.'
+    : 'Sign in to load your data. Anything on this device will be merged with your account.');
   const keep = redraw ? { email: $('#auth-email')?.value || '' } : null;
-  if (sheetEl.hidden || !redraw) openSheet(create ? 'Create account' : 'Sign in', body, submitAuth);
-  else { $('#sheet-title').textContent = create ? 'Create account' : 'Sign in'; $('#sheet-body').innerHTML = body; sheetSubmit = submitAuth; }
+  const title = mode === 'create' ? 'Create account' : 'Sign in';
+  if (sheetEl.hidden || !redraw) openSheet(title, body, submitAuth);
+  else { $('#sheet-title').textContent = title; $('#sheet-body').innerHTML = body; sheetSubmit = submitAuth; }
   if (keep) $('#auth-email').value = keep.email;
+}
+
+/** Remove everything from this device (used when a different account signs in). */
+function wipeLocal() {
+  const prefs = { ...state.prefs, name: '', catFilter: 'all' };
+  state = emptyState(); state.prefs = prefs; save(state);
 }
 
 async function submitAuth() {
@@ -1166,21 +1222,25 @@ async function submitAuth() {
   if (!email || !password) { err.textContent = 'Enter your email and password.'; return; }
   if (authMode === 'create' && password.length < 8) { err.textContent = 'Use a password with at least 8 characters.'; return; }
   const btn = $('#auth-submit'); btn.disabled = true; btn.textContent = authMode === 'create' ? 'Creating account…' : 'Signing in…';
+  const reset = () => { btn.disabled = false; btn.textContent = authMode === 'create' ? 'Create account' : 'Sign in'; };
   try {
     const res = await api(authMode === 'create' ? 'signup' : 'login', { method: 'POST', body: { email, password, code: f.code ? f.code.value.trim() : undefined } });
     if (!res.ok) {
-      err.textContent = res.data?.error || (res.json ? 'That didn’t work. Try again.' : 'Cloud sync isn’t available here.');
-      btn.disabled = false; btn.textContent = authMode === 'create' ? 'Create account' : 'Sign in';
+      err.textContent = res.data?.error || (res.json ? 'That didn’t work. Try again.' : 'Sign-in isn’t available here.');
+      reset();
       return;
     }
+    const account = res.data.email;
+    // Data on this device that belongs to a different account must never reach this one.
+    if (cloud.owner && cloud.owner !== account) wipeLocal();
     cloud.available = true;
-    cloud.email = res.data.email; cloud.version = 0; persistMeta();
-    closeSheet();
-    toast(authMode === 'create' ? 'Account created. Backing up your data…' : 'Signed in. Syncing your data…');
+    cloud.email = account; cloud.owner = account; cloud.version = 0; persistMeta();
+    closeSheet(); hideGate(); render();
+    toast(authMode === 'create' ? 'Welcome to Jon Pocket!' : 'Signed in');
     await syncNow(false);
   } catch (e) {
     err.textContent = 'Couldn’t reach the server. Check your connection and try again.';
-    btn.disabled = false; btn.textContent = authMode === 'create' ? 'Create account' : 'Sign in';
+    reset();
   }
 }
 
@@ -1188,10 +1248,11 @@ async function signOut() {
   clearTimeout(pushTimer);
   try { if (navigator.onLine) await syncNow(false); } catch (e) { /* ignore */ }
   try { await api('logout', { method: 'POST', body: {} }); } catch (e) { /* ignore */ }
-  cloud.email = null; cloud.version = 0; cloud.lastSync = 0; persistMeta();
-  const prefs = { ...state.prefs, name: '' };
-  state = emptyState(); state.prefs = prefs; save(state);
-  closeSheet(); render(); toast('Signed out');
+  cloud.email = null; cloud.owner = null; cloud.version = 0; cloud.lastSync = 0; persistMeta();
+  wipeLocal();
+  closeSheet(); render();
+  if (cloud.available) showGate('signin', '');
+  toast('Signed out');
 }
 
 window.addEventListener('online', () => { if (cloud.email) syncNow(false); });
@@ -1209,4 +1270,5 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 
 render();
+if (!window.RENCANA_PREVIEW && !cloud.email) showGate('signin');
 checkCloud();

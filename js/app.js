@@ -1358,6 +1358,7 @@ function dataSheet() {
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     <label class="field"><span>Month starts on (payday)</span><select class="input" id="cycle-day">${Array.from({ length: 28 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === cycleDay() ? 'selected' : ''}>${n === 1 ? '1st (calendar month)' : `${n}${n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : n === 21 ? 'st' : 'th'} of each month`}</option>`).join('')}</select></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    <button type="button" class="tile-btn" data-action="start-tour"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('book')}</span><span class="stack" style="gap:0"><span class="t-strong">Take the tour</span><span class="t-small">A quick walk-through of every screen</span></span></span>${svg('chev', 'class="chev"')}</button>
     ${cloud.email && !window.RENCANA_PREVIEW ? `<button type="button" class="tile-btn" data-action="shortcut-setup"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('phone')}</span><span class="stack" style="gap:0"><span class="t-strong">iPhone Shortcut</span><span class="t-small">Add income or expenses from Shortcuts or Siri</span></span></span>${svg('chev', 'class="chev"')}</button>` : ''}
     <button type="button" class="tile-btn" data-action="manage-categories"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('grid')}</span><span class="stack" style="gap:0"><span class="t-strong">Categories</span><span class="t-small">Add your own, like Coffee or Pets</span></span></span>${svg('chev', 'class="chev"')}</button>
     <label class="field"><span>Imported transactions go to</span><select class="input" id="import-pocket">${pockets().map((p) => `<option value="${p.id}" ${p.id === (pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket()) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
@@ -1545,6 +1546,7 @@ const ACTIONS = {
     fitSlides(i);
     if (box) box.scrollTo({ left: i * box.clientWidth, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   },
+  'start-tour': () => startTour(),
   'shortcut-setup': () => { shortcutKey = null; shortcutSheet(); },
   'shortcut-new': async () => {
     const r = await api('shortcut-key', { method: 'POST', body: {} }).catch(() => null);
@@ -1958,6 +1960,7 @@ function hideGate() {
   gateEl.innerHTML = '';
   gateNote = '';
   sheetSubmit = null;
+  if (typeof maybeStartTour === 'function') setTimeout(maybeStartTour, 0);
 }
 
 let authMode = 'signin';
@@ -2034,6 +2037,127 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
 
+
+/* =========================================================
+   Guided tour — highlights the real screens one step at a time
+   ========================================================= */
+const TOUR_KEY = 'jonpocket:tour';
+const TOUR = [
+  { title: 'Welcome to Jon Pocket 👋', body: 'Jon Pocket helps you see where your money goes, keep spending under control and save for things that matter. This quick tour shows you around. It takes about a minute.' },
+  { route: '#/home', target: 'section.hero[aria-label="Balance"]', title: 'Your total balance', body: 'All your pockets added together. Below it you see this month’s income and expenses. Tap the eye icon at the top to hide amounts when someone is looking.' },
+  { route: '#/home', target: '.pocket-row', title: 'Pockets', body: 'Each bank account, e-wallet or cash wallet is a pocket. Tap one to set its balance to what your bank app shows. Add more with <b>Add pocket</b>, or rename and delete them with <b>Manage</b>.' },
+  { target: '.tab-add', title: 'Add a transaction', body: 'Tap <b>+</b> any time to record an <b>expense</b>, <b>income</b> or a <b>transfer</b> between your pockets. Pick a category and the pocket it came from. Transfers don’t count as spending.' },
+  { route: '#/home', target: 'section[aria-label="Spent this month"]', title: 'Spent this month', body: 'Swipe left and right for three views: your budget, your spending pace by day, and which categories take the most money.' },
+  { route: '#/home', target: 'section[aria-label="Goals"]', title: 'Savings goals', body: 'Saving for a laptop, a trip or an emergency fund? Create a goal and link it to a pocket. The progress then follows that pocket’s balance by itself.' },
+  { route: '#/activity', target: '.search-row', title: 'Find any transaction', body: 'Search by name or note. Tap a transaction’s <b>View Details</b> to edit or delete it.' },
+  { route: '#/activity', target: '.cat-grid', title: 'Filter and add categories', body: 'Tap a category to see only those transactions, or <b>Recurring</b> for regular bills. Missing one? Tap <b>Add</b> to make your own with its own icon and colour.' },
+  { route: '#/stats', target: '#view .card, #view section', title: 'Stats', body: 'See your spending by week, month or year, and which categories and sources of income are the biggest.' },
+  { route: '#/plan/budgets', target: 'section[aria-label="Budget vs income"]', title: 'Budgets', body: 'Set a monthly limit for each category. This card compares the total you’ve budgeted with your income, so you know how much is left to save.' },
+  { route: '#/plan/budgets', target: '[data-action="payments"]', title: 'Recurring payments', body: 'Mark rent, bills and subscriptions as recurring to see what you pay every month at a glance.' },
+  { route: '#/plan/goals', target: '[data-action="lesson"]', closest: 'section, .card', title: 'The 50/30/20 check', body: 'A simple rule of thumb: about 50% of income on needs, 30% on wants and 20% on savings. Jon Pocket checks how you’re doing each month.' },
+  { route: '#/home', target: '.avatar', title: 'Settings and your data', body: 'Tap here to change your name and the day your month starts (for example your payday), manage categories, import or export a CSV, and check that your data is synced.' },
+  { route: '#/home', title: 'You’re all set!', body: 'Start by setting your pocket balances, then add your first transaction. You can replay this tour any time from Settings.', last: true }
+];
+let tourStep = -1;
+const tourEl = document.createElement('div');
+tourEl.className = 'tour';
+tourEl.hidden = true;
+tourEl.innerHTML = '<div class="tour-spot"></div><div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title"></div>';
+document.body.appendChild(tourEl);
+const tourSeen = () => { try { return !!localStorage.getItem(TOUR_KEY); } catch { return true; } };
+
+function startTour() {
+  closeSheet();
+  tourStep = 0;
+  tourEl.hidden = false;
+  document.body.classList.add('touring');
+  showTourStep();
+}
+function endTour(go) {
+  tourEl.hidden = true;
+  tourStep = -1;
+  document.body.classList.remove('touring');
+  try { localStorage.setItem(TOUR_KEY, String(Date.now())); } catch { /* private mode */ }
+  if (go) go();
+}
+function tourTarget(step) {
+  if (!step.target) return null;
+  let el = null;
+  for (const sel of step.target.split(/,\s*/)) { el = document.querySelector(sel); if (el) break; }
+  if (el && step.closest) el = el.closest(step.closest) || el;
+  return el && el.getClientRects().length ? el : null;
+}
+async function showTourStep() {
+  const step = TOUR[tourStep];
+  const card = tourEl.querySelector('.tour-card');
+  const spot = tourEl.querySelector('.tour-spot');
+  card.classList.remove('show');
+  if (step.route && location.hash !== step.route) {
+    location.hash = step.route;
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  let el = tourTarget(step);
+  if (el && !el.closest('.tabbar, .appbar')) el.scrollIntoView({ block: 'center', behavior: 'instant' });
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  el = tourTarget(step);
+
+  const n = TOUR.length;
+  card.innerHTML = `
+    <div class="between"><span class="t-label">${tourStep === 0 ? 'Quick tour' : `Step ${tourStep} of ${n - 1}`}</span>
+      ${step.last ? '' : '<button type="button" class="tour-skip" data-tour="skip">Skip tour</button>'}</div>
+    <h2 id="tour-title" class="t-h3">${step.title}</h2>
+    <p class="t-body" style="color:var(--ink-2)">${step.body}</p>
+    <div class="tour-dots" aria-hidden="true">${TOUR.map((_, i) => `<i class="${i === tourStep ? 'on' : i < tourStep ? 'done' : ''}"></i>`).join('')}</div>
+    <div class="btn-row">
+      ${tourStep > 0 ? '<button type="button" class="btn" data-tour="back" style="min-height:48px;background:var(--primary-50);color:var(--primary)">Back</button>' : ''}
+      ${step.last
+        ? '<button type="button" class="btn primary" data-tour="first-tx" style="min-height:48px">Add a transaction</button>'
+        : `<button type="button" class="btn primary" data-tour="next" style="min-height:48px">${tourStep === 0 ? 'Show me around' : 'Next'}</button>`}
+    </div>
+    ${step.last ? '<button type="button" class="tour-skip" data-tour="done" style="align-self:center">Maybe later</button>' : ''}`;
+
+  const pad = 8, vw = window.innerWidth, vh = window.innerHeight;
+  if (el) {
+    const r = el.getBoundingClientRect();
+    const top = Math.max(4, r.top - pad), left = Math.max(4, r.left - pad);
+    const w = Math.min(vw - 8, r.right + pad) - left, h = Math.min(vh - 4, r.bottom + pad) - top;
+    Object.assign(spot.style, { top: top + 'px', left: left + 'px', width: w + 'px', height: h + 'px', borderRadius: el.matches('.tab-add, .avatar') ? '999px' : '24px', opacity: 1 });
+    spot.classList.remove('none');
+    const cardH = card.offsetHeight || 220;
+    const below = vh - (top + h), above = top;
+    card.style.left = ''; card.style.transform = '';
+    if (below >= cardH + 24 || below >= above) card.style.top = Math.min(vh - cardH - 16, top + h + 14) + 'px';
+    else card.style.top = Math.max(16, top - cardH - 14) + 'px';
+  } else {
+    spot.classList.add('none');
+    card.style.top = Math.max(16, (vh - (card.offsetHeight || 260)) / 2) + 'px';
+  }
+  requestAnimationFrame(() => card.classList.add('show'));
+  card.querySelector('[data-tour="next"], [data-tour="first-tx"]')?.focus({ preventScroll: true });
+}
+tourEl.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tour]');
+  if (!b) return;
+  const a = b.dataset.tour;
+  if (a === 'next') { tourStep = Math.min(TOUR.length - 1, tourStep + 1); showTourStep(); }
+  else if (a === 'back') { tourStep = Math.max(0, tourStep - 1); showTourStep(); }
+  else if (a === 'skip' || a === 'done') endTour(() => { location.hash = '#/home'; });
+  else if (a === 'first-tx') endTour(() => ACTIONS['open-tx']());
+});
+document.addEventListener('keydown', (e) => {
+  if (tourStep < 0) return;
+  if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+  else if (e.key === 'ArrowRight' && tourStep < TOUR.length - 1) { tourStep++; showTourStep(); }
+  else if (e.key === 'ArrowLeft' && tourStep > 0) { tourStep--; showTourStep(); }
+}, true);
+window.addEventListener('resize', () => { if (tourStep >= 0) showTourStep(); });
+// First time on this device with an empty account: offer the tour
+function maybeStartTour() {
+  if (tourSeen() || state.transactions.length || tourStep >= 0) return;
+  setTimeout(() => { if (gateEl.hidden && sheetEl.hidden && !tourSeen() && !state.transactions.length && tourStep < 0) startTour(); }, 1200);
+}
+
 render();
 if (!window.RENCANA_PREVIEW && !cloud.email) showGate('signin');
+else maybeStartTour();
 checkCloud();

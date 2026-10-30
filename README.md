@@ -6,13 +6,13 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 
 | Tab | Features |
 |---|---|
-| **Home** | Get-started checklist for new users, welcome header, purple "Spent" card with ring progress, balance / income / saved, round category shortcuts, budget tip banner, recent transactions |
-| **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
+| **Home** | Get-started checklist for new users, purple card with total balance and this month's income / expenses, "Spent this month" card with budget progress, goals progress, recent transactions |
+| **Transactions** | Search, round category filters (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
 | **Sign-in page** | Shown before entering the app on the live site: sign in or create an account. Each account's data is private. |
 | **Account** (tap the logo, or Transactions → sliders) | Cloud sync status, sync now, sign out |
 | **+ (centre)** | Add income or expense |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
-| **Plan** | Budgets (ring, daily allowance, per-category limits), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
+| **Plan** | Budgets (ring, daily allowance, per-category limits, recurring payments with Mark / Unmark), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
 
 Data is always saved on the device first (`localStorage`), so the app works offline. When you sign in, it also syncs to your account in the cloud (Cloudflare D1) and merges changes from your other devices.
 
@@ -109,7 +109,7 @@ npx wrangler pages dev . --d1 DB=jon-pocket-local
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v6'` to `'rencana-v7'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v7'` to `'rencana-v8'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.

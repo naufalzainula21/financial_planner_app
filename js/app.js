@@ -72,7 +72,7 @@ function txRow(t) {
       ${catTile(t.cat)}
       <div class="meta">
         <span class="name ellipsis">${esc(t.name)}</span>
-        <span class="t-small ellipsis">${esc(t.method || c.label)}</span>
+        <span class="t-small ellipsis">${esc(t.method && t.method !== 'Recurring' ? t.method : c.label)}${isRecurring(t) ? ' · <span style="color:var(--primary);font-weight:500">Recurring</span>' : ''}</span>
         <button type="button" class="view" data-action="edit-tx" data-id="${t.id}">View Details</button>
       </div>
       <div class="amt">
@@ -145,10 +145,11 @@ function areaChart(values, labels, highlightLabel) {
 /* =========================================================
    Pages
    ========================================================= */
-const HOME_CATS = [
-  ['recurring', 'Recurring', 'repeat'], ['food', 'Food', 'food'], ['transport', 'Transport', 'transport'], ['shopping', 'Shopping', 'shopping'],
-  ['bills', 'Bills', 'bills'], ['health', 'Health', 'health'], ['fun', 'Fun', 'fun'], ['income', 'Income', 'income']
+const TX_FILTERS = [
+  ['all', 'All', 'grid'], ['income', 'Income', 'income'], ['recurring', 'Recurring', 'repeat'], ['food', 'Food', 'food'], ['transport', 'Transport', 'transport'],
+  ['shopping', 'Shopping', 'shopping'], ['bills', 'Bills', 'bills'], ['health', 'Health', 'health'], ['fun', 'Fun', 'fun'], ['other', 'Other', 'other']
 ];
+const isRecurring = (t) => !!t.recurring || t.method === 'Recurring';
 
 const PAGES = {
   home() {
@@ -157,10 +158,10 @@ const PAGES = {
     const recent = sortedTx(state.transactions).slice(0, 5);
     const monthName = now().toLocaleDateString('en-GB', { month: 'long' });
     const noBudget = b.total === 0;
-    const banner = noBudget ? `Set a monthly budget to see how much you can still spend.`
-      : b.p < 75 ? `You're doing great! <b>${idr(b.left)}</b> left in your budget.`
-      : b.p < 100 ? `Heads up: only <b>${idr(b.left)}</b> left for ${daysLeftInMonth()} days.`
-      : `You're over budget by <b>${idr(-b.left)}</b> this month.`;
+    const budgetMsg = b.p < 75 ? `You're doing great: ${idr(b.left)} left, about ${idrShort(Math.max(0, b.left) / daysLeftInMonth())} a day.`
+      : b.p < 100 ? `Heads up: only ${idr(b.left)} left for ${daysLeftInMonth()} days.`
+      : `Over budget by ${idr(-b.left)} this month.`;
+    const topBudgets = Object.entries(state.budgets).sort((x, y) => pct(b.spent[y[0]] || 0, y[1]) - pct(b.spent[x[0]] || 0, x[1])).slice(0, 3);
     const isNew = !state.transactions.length;
     const steps = [
       { done: state.transactions.some((t) => t.type === 'income'), title: 'Add your income', sub: 'Salary, freelance or any money in', action: 'open-income' },
@@ -190,34 +191,57 @@ const PAGES = {
         ${svg('chev', 'class="chev"')}
       </button>` : ''}
 
-      <section class="hero" aria-label="Spending this month">
-        <div class="between" style="align-items:center">
-          <div class="stack" style="gap:2px;min-width:0">
-            <span class="t-label">Spent</span>
-            <span class="t-display">${money(b.used)}</span>
-            <span class="t-small">${noBudget ? 'No budget set yet' : `of ${money(b.total)}`}</span>
-          </div>
-          ${ring(b.p, monthName)}
+      <section class="hero" aria-label="Balance">
+        <div class="stack" style="gap:4px">
+          <span class="t-label">Total balance</span>
+          <span class="t-display" style="font-size:34px">${money(balance())}</span>
+          <span class="t-small">${monthName} ${now().getFullYear()} · ${m.net >= 0 ? 'saved' : 'overspent'} ${money(Math.abs(m.net), true)}</span>
         </div>
-        <div class="grid-3" style="gap:8px">
-          <div class="glass"><span class="t-small">Balance</span><b style="font-size:14px">${money(balance(), true)}</b></div>
-          <div class="glass"><span class="t-small">Income</span><b style="font-size:14px">${money(m.income, true)}</b></div>
-          <div class="glass"><span class="t-small">Saved</span><b class="soft-pos" style="font-size:14px">${money(m.net, true)}</b></div>
+        <div class="grid-2" style="gap:10px">
+          <div class="glass"><span class="t-small row" style="gap:6px">${svg('up', 'style="width:14px;height:14px;fill:none;stroke:#C8F7D9;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"')}Income</span><b style="font-size:16px">${money(m.income)}</b></div>
+          <div class="glass"><span class="t-small row" style="gap:6px">${svg('down', 'style="width:14px;height:14px;fill:none;stroke:#FFC9CF;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"')}Expenses</span><b style="font-size:16px">${money(m.expense)}</b></div>
         </div>
       </section>
 
-      <div class="section-head"><h2>Categories</h2><a class="see-all" href="#/stats">See All</a></div>
-      <div class="cat-grid">
-        ${HOME_CATS.map(([id, label, icon]) => `
-          <button type="button" class="cat-btn" data-action="cat-filter" data-value="${id}">
-            <span class="circle">${svg(icon)}</span>${label}
-          </button>`).join('')}
-      </div>
+      <section class="card lg stack" aria-label="Spent this month" style="gap:12px">
+        <div class="between"><span class="t-h3">Spent this month</span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
+        <div class="between" style="align-items:flex-end">
+          <span class="t-stat">${money(m.expense)}</span>
+          ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
+        </div>
+        ${noBudget ? `
+          <button type="button" class="tile-btn" data-action="add-budget" style="background:var(--primary-50);border:0">
+            <span class="stack" style="gap:0"><span class="t-strong">Set a monthly budget</span><span class="t-small">See how much you can still spend</span></span>${svg('chev', 'class="chev"')}
+          </button>` : `
+          ${bar(b.p, b.p >= 100 ? 'var(--neg)' : b.p >= 90 ? '#F29E0C' : '')}
+          <span class="t-small" style="color:${b.p >= 100 ? 'var(--neg)' : 'var(--ink-2)'}">${budgetMsg}</span>
+          <div class="stack" style="gap:10px;padding-top:4px">
+            ${topBudgets.map(([cat, limit]) => {
+              const sp = b.spent[cat] || 0, p = pct(sp, limit), c = CATEGORIES[cat] || CATEGORIES.other;
+              return `<div class="row" style="gap:10px">${catTile(cat, true)}<div class="grow stack" style="gap:5px">
+                <div class="between"><span class="t-body" style="font-weight:500">${esc(c.short)}</span><span class="t-small" style="color:${p >= 90 ? 'var(--neg)' : 'var(--muted)'}">${idrShort(sp)} / ${idrShort(limit)}</span></div>
+                ${bar(p, p >= 90 ? 'var(--neg)' : c.color, 'thin')}</div></div>`;
+            }).join('')}
+          </div>`}
+      </section>
 
-      <button type="button" class="banner" data-action="${noBudget ? 'add-budget' : 'lesson'}">
-        <span class="art">${svg('piggy')}</span>
-        <p>${banner}<br><span style="font-size:12px;font-weight:500;opacity:0.8">${noBudget ? 'Tap to add your first budget' : 'Tap to learn the 50/30/20 rule'}</span></p>
-      </button>
+      <section class="card lg stack" aria-label="Goals" style="gap:12px">
+        <div class="between"><span class="t-h3">Goals</span><a class="see-all" href="#/plan/goals">${state.goals.length ? 'See all' : ''}</a></div>
+        ${state.goals.length ? state.goals.slice(0, 3).map((g) => {
+          const p = pct(g.saved, g.target);
+          return `<button type="button" class="row" data-action="edit-goal" data-id="${g.id}" style="gap:10px;border:0;background:none;padding:0;text-align:left;width:100%;color:var(--ink)">
+            ${goalTile(g.icon, g.color)}
+            <span class="grow stack" style="gap:5px">
+              <span class="between"><span class="t-body ellipsis" style="font-weight:500">${esc(g.name)}</span><span class="t-small">${p}%</span></span>
+              ${bar(p, g.color, 'thin')}
+              <span class="t-small">${money(g.saved, true)} of ${idrShort(g.target)}</span>
+            </span>
+          </button>`;
+        }).join('') : `
+          <button type="button" class="tile-btn" data-action="add-goal" style="background:var(--primary-50);border:0">
+            <span class="stack" style="gap:0"><span class="t-strong">Create a savings goal</span><span class="t-small">An emergency fund is a good first goal</span></span>${svg('chev', 'class="chev"')}
+          </button>`}
+      </section>
 
       <div class="section-head"><h2>Recent</h2>${isNew ? '' : '<a class="see-all" href="#/activity">See All</a>'}</div>
       ${recent.length ? txList(recent) : `<div class="list-card"><p class="empty">No transactions yet.<br>Tap the <b style="color:var(--primary)">+</b> button below to add your first one.</p></div>`}
@@ -227,7 +251,6 @@ const PAGES = {
 
   activity() {
     const f = state.prefs.catFilter;
-    const chips = [['all', 'All'], ['income', 'Income'], ['recurring', 'Recurring'], ...catsOf('expense').map((c) => [c, CATEGORIES[c].short])];
     return {
       header: 'title', title: 'Transactions', action: 'data',
       html: `
@@ -237,7 +260,12 @@ const PAGES = {
         </label>
         <button type="button" class="icon-btn soft" data-action="data-menu" aria-label="Data options">${svg('sliders')}</button>
       </div>
-      ${textTabs(chips, 'cat-filter-here', f, 'Filter')}
+      <div class="cat-grid five" role="group" aria-label="Filter by category">
+        ${TX_FILTERS.map(([id, label, icon]) => `
+          <button type="button" class="cat-btn" data-action="cat-filter-here" data-value="${id}" aria-pressed="${id === f}">
+            <span class="circle">${svg(icon)}</span>${label}
+          </button>`).join('')}
+      </div>
       <div class="stack" id="tx-list" style="gap:18px">${activityList()}</div>`
     };
   },
@@ -328,7 +356,7 @@ const PAGES = {
 function planBudgets() {
   const b = budgetSummary();
   const perDay = Math.max(0, b.left) / daysLeftInMonth();
-  const recurring = monthTx().filter((t) => t.method === 'Recurring').length;
+  const recurring = new Set(state.transactions.filter((t) => t.type === 'expense' && isRecurring(t)).map((t) => t.name.toLowerCase())).size;
   return `
     <section class="hero">
       <div class="between">
@@ -343,7 +371,7 @@ function planBudgets() {
     </section>
 
     <button type="button" class="tile-btn" data-action="payments">
-      <span class="row" style="gap:12px">${catTile('bills')}<span class="stack" style="gap:0"><span class="t-strong">Recurring payments</span><span class="t-small">${recurring} this month</span></span></span>
+      <span class="row" style="gap:12px">${catTile('bills')}<span class="stack" style="gap:0"><span class="t-strong">Recurring payments</span><span class="t-small">${recurring ? `${recurring} marked` : 'Mark rent, bills and subscriptions'}</span></span></span>
       ${svg('chev', 'class="chev"')}
     </button>
 
@@ -407,7 +435,7 @@ function planGoals() {
     <button type="button" class="dashed-btn" data-action="add-goal">+ New goal</button>
 
     <div class="card lg stack">
-      <div class="stack" style="gap:2px"><span class="t-h3">50/30/20 check</span><span class="t-label">Based on ${idr(income)} income this month</span></div>
+      <div class="stack" style="gap:2px"><span class="between"><span class="t-h3">50/30/20 check</span><button type="button" class="see-all" data-action="lesson" style="color:var(--primary)">What is this?</button></span><span class="t-label">Based on ${idr(income)} income this month</span></div>
       ${income ? plan.map((p) => {
         const target = income * p.share, diff = p.actual - target;
         const good = p.saving ? diff >= 0 : diff <= 0;
@@ -451,7 +479,7 @@ let activitySearch = '';
 function matchesFilter(t, f) {
   if (f === 'all') return true;
   if (f === 'income') return t.type === 'income';
-  if (f === 'recurring') return t.method === 'Recurring';
+  if (f === 'recurring') return isRecurring(t);
   return t.cat === f;
 }
 function activityList() {
@@ -570,7 +598,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet
 
 /* ---------- Transaction sheet ---------- */
 let txDraft = null;
-const METHODS = ['Debit card', 'Credit card', 'E-wallet', 'QRIS', 'Bank transfer', 'Cash', 'Recurring', 'Split bill'];
+const METHODS = ['Debit card', 'Credit card', 'E-wallet', 'QRIS', 'Bank transfer', 'Cash', 'Split bill'];
 
 function txSheet(existing) {
   txDraft = existing ? { ...existing } : { id: null, type: 'expense', cat: 'food', amount: '', name: '', note: '', date: isoDate(now()), method: 'Debit card' };
@@ -581,6 +609,7 @@ function readTxForm() {
   if (!f) return;
   txDraft.amount = f.amount.value; txDraft.name = f.name.value; txDraft.date = f.date.value;
   txDraft.method = f.method.value; txDraft.note = f.note.value;
+  txDraft.recurring = !!(f.recurring && f.recurring.checked);
 }
 function drawTxSheet() {
   const d = txDraft;
@@ -601,8 +630,10 @@ function drawTxSheet() {
       <label class="field"><span>Description</span><input class="input" name="name" maxlength="60" placeholder="${d.type === 'expense' ? 'e.g. Lunch with team' : 'e.g. Monthly salary'}" value="${esc(d.name)}"></label>
       <div class="grid-2">
         <label class="field"><span>Date</span><input class="input" type="date" name="date" value="${esc(d.date)}" required></label>
-        <label class="field"><span>Paid with</span><select class="input" name="method">${METHODS.map((m) => `<option ${m === d.method ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+        <label class="field"><span>Paid with</span><select class="input" name="method">${(METHODS.includes(d.method) || !d.method || d.method === 'Recurring' ? METHODS : [...METHODS, d.method]).map((m) => `<option ${m === d.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
       </div>
+      ${d.type === 'expense' ? `<label class="check-row"><input type="checkbox" name="recurring" ${isRecurring(d) ? 'checked' : ''}>
+        <span class="stack" style="gap:0"><span class="t-strong">Recurring payment</span><span class="t-small">Repeats every month, like rent, bills or subscriptions</span></span></label>` : ''}
       <label class="field"><span>Note (optional)</span><input class="input" name="note" maxlength="120" value="${esc(d.note)}"></label>
       <p class="t-small neg" id="tx-error" role="alert"></p>
       <div class="btn-row">
@@ -621,7 +652,8 @@ function saveTx() {
   if (!txDraft.date) { $('#tx-error').textContent = 'Pick a date.'; return; }
   const rec = {
     id: txDraft.id || uid(), type: txDraft.type, cat: txDraft.cat, amount: Math.round(amount),
-    name: txDraft.name.trim() || CATEGORIES[txDraft.cat].label, note: txDraft.note.trim(), date: txDraft.date, method: txDraft.method, u: stamp()
+    name: txDraft.name.trim() || CATEGORIES[txDraft.cat].label, note: txDraft.note.trim(), date: txDraft.date, method: txDraft.method === 'Recurring' ? 'Bank transfer' : txDraft.method,
+    recurring: txDraft.type === 'expense' && !!txDraft.recurring, u: stamp()
   };
   const i = state.transactions.findIndex((t) => t.id === rec.id);
   if (i >= 0) state.transactions[i] = rec; else state.transactions.push(rec);
@@ -725,21 +757,73 @@ function newGoalSheet() {
 /* ---------- Other sheets ---------- */
 function notificationsSheet() {
   const list = notifications();
-  openSheet('Notifications', list.length ? `<div class="list-card" style="box-shadow:none;border:1px solid var(--line)">${list.map((n) => `
+  openSheet('Notifications', list.length ? `<div class="list-card" >${list.map((n) => `
     <div class="tx">${n.goal ? goalTile(n.goal.icon, n.goal.color) : catTile(n.icon)}<span class="t-body">${esc(n.text)}</span></div>`).join('')}</div>`
     : '<p class="empty">You’re all caught up.</p>');
 }
+/* ---------- Recurring payments ---------- */
+// One row per payment name (e.g. "Netflix"), using its most recent transaction.
+function latestByName(list) {
+  const m = new Map();
+  for (const t of sortedTx(list)) { const k = t.name.trim().toLowerCase(); if (!m.has(k)) m.set(k, t); }
+  return [...m.values()];
+}
+function recurringRow(t, marked, view) {
+  return `
+    <div class="tx">
+      ${catTile(t.cat)}
+      <div class="meta"><span class="name ellipsis">${esc(t.name)}</span><span class="t-small">${money(t.amount)} · last ${shortDay(t.date)}</span></div>
+      <button type="button" class="pill${marked ? '' : ' pill-primary'}" data-action="toggle-recurring" data-id="${t.id}" data-view="${view}" aria-label="${marked ? 'Unmark' : 'Mark'} ${esc(t.name)} as recurring" style="flex-shrink:0;min-height:36px">${marked ? 'Unmark' : 'Mark'}</button>
+    </div>`;
+}
 function paymentsSheet() {
-  const rec = sortedTx(monthTx().filter((t) => t.method === 'Recurring'));
-  const total = rec.reduce((s, t) => s + t.amount, 0);
-  openSheet('Recurring payments', `
-    <p class="t-label">${rec.length} this month · ${idr(total)} total</p>
-    ${rec.length ? txList(rec) : '<p class="empty">Mark a transaction as “Recurring” to see it here.</p>'}`);
+  const items = latestByName(state.transactions.filter((t) => t.type === 'expense' && isRecurring(t)));
+  const monthly = items.reduce((s, t) => s + t.amount, 0);
+  const body = `
+    <div class="stack" style="gap:2px;background:var(--primary-50);border-radius:16px;padding:14px 16px">
+      <span class="t-small">Leaves your account about every month</span>
+      <span class="t-stat">${money(monthly)}</span>
+      <span class="t-small">${items.length} recurring payment${items.length === 1 ? '' : 's'}</span>
+    </div>
+    ${items.length ? `<div class="list-card">${items.map((t) => recurringRow(t, true, 'list')).join('')}</div>`
+      : '<p class="empty">Nothing marked yet. Mark rent, bills and subscriptions so you can see what leaves your account every month.</p>'}
+    <button type="button" class="btn primary" data-action="recurring-picker">+ Mark a payment as recurring</button>`;
+  if (sheetEl.hidden) openSheet('Recurring payments', body);
+  else { $('#sheet-title').textContent = 'Recurring payments'; $('#sheet-body').innerHTML = body; sheetSubmit = null; }
+}
+function recurringPicker() {
+  const since = isoDate(new Date(Date.now() - 62 * DAY));
+  const items = latestByName(state.transactions.filter((t) => t.type === 'expense' && !isRecurring(t) && t.date >= since)).slice(0, 40);
+  const body = `
+    <p class="t-body" style="color:var(--ink-2)">Choose the payments that repeat every month. Every transaction with the same name is marked too.</p>
+    ${items.length ? `<div class="list-card">${items.map((t) => recurringRow(t, false, 'picker')).join('')}</div>`
+      : '<p class="empty">No expenses from the last two months to choose from. Add one with the + button, or tick “Recurring payment” when you add it.</p>'}
+    <button type="button" class="btn" style="background:var(--chip);color:var(--ink)" data-action="payments">Done</button>`;
+  $('#sheet-title').textContent = 'Mark as recurring';
+  $('#sheet-body').innerHTML = body;
+  sheetSubmit = null;
+}
+function toggleRecurring(el) {
+  const t = state.transactions.find((x) => x.id === el.dataset.id);
+  if (!t) return;
+  const mark = !isRecurring(t);
+  const key = t.name.trim().toLowerCase();
+  const u = stamp();
+  for (const x of state.transactions) {
+    if (x.type === 'expense' && x.name.trim().toLowerCase() === key) {
+      x.recurring = mark;
+      if (!mark && x.method === 'Recurring') x.method = 'Bank transfer';
+      x.u = u;
+    }
+  }
+  save(state); render(); schedulePush();
+  if (el.dataset.view === 'picker') recurringPicker(); else paymentsSheet();
+  toast(mark ? `${t.name} marked as recurring` : `${t.name} is no longer recurring`);
 }
 function lessonSheet() {
   openSheet('The 50/30/20 rule', `
     <p class="t-body">Split your take-home income into three buckets:</p>
-    <div class="list-card" style="box-shadow:none;border:1px solid var(--line)">
+    <div class="list-card" >
       <div class="tx"><span class="t-h2" style="width:56px;color:var(--primary)">50%</span><span class="t-body"><b>Needs</b>: rent, food, transport, bills, health.</span></div>
       <div class="tx"><span class="t-h2" style="width:56px;color:#B87A00">30%</span><span class="t-body"><b>Wants</b>: eating out, shopping, entertainment.</span></div>
       <div class="tx"><span class="t-h2" style="width:56px;color:var(--pos)">20%</span><span class="t-body"><b>Savings</b>: emergency fund, goals, investing.</span></div>
@@ -770,9 +854,9 @@ function dataSheet() {
   openSheet('Your data', `
     <div id="cloud-card">${cloudCard()}</div>
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
-    ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
-    <label class="tile-btn" style="box-shadow:none;border:1px solid var(--line);cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
-    <button type="button" class="tile-btn" data-action="start-empty" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
+    ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    <label class="tile-btn" style="cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
+    <button type="button" class="tile-btn" data-action="start-empty" ><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
 }
 /* ---------- CSV import ---------- */
 function parseCsv(text) {
@@ -811,7 +895,7 @@ function importCsvText(text) {
   const col = (...names) => head.findIndex((h) => names.includes(h));
   const iDate = col('date', 'tanggal'), iType = col('type', 'jenis'), iCat = col('category', 'kategori');
   const iName = col('description', 'keterangan', 'name'), iAmt = col('amount', 'jumlah', 'nominal');
-  const iMethod = col('paid with', 'method'), iNote = col('note', 'catatan');
+  const iMethod = col('paid with', 'method'), iNote = col('note', 'catatan'), iRec = col('recurring');
   if (iDate < 0 || iAmt < 0) throw new Error('The file needs at least "Date" and "Amount" columns.');
   const key = (t) => `${t.date}|${t.type}|${t.amount}|${t.name.toLowerCase()}`;
   const existing = new Set(state.transactions.map(key));
@@ -829,6 +913,7 @@ function importCsvText(text) {
       method: ((iMethod >= 0 ? r[iMethod] : '') || '').trim() || 'Bank transfer',
       note: ((iNote >= 0 ? r[iNote] : '') || '').trim()
     };
+    if (type === 'expense' && iRec >= 0 && /^(yes|y|true|1|ya)$/i.test((r[iRec] || '').trim())) t.recurring = true;
     if (existing.has(key(t))) { skipped++; continue; }
     t.u = stamp();
     existing.add(key(t)); state.transactions.push(t); added++;
@@ -837,8 +922,8 @@ function importCsvText(text) {
 }
 
 function exportCsv() {
-  const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note']];
-  for (const t of sortedTx(state.transactions)) rows.push([t.date, t.type, CATEGORIES[t.cat]?.label || t.cat, t.name, t.type === 'income' ? t.amount : -t.amount, t.method, t.note || '']);
+  const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note', 'Recurring']];
+  for (const t of sortedTx(state.transactions)) rows.push([t.date, t.type, CATEGORIES[t.cat]?.label || t.cat, t.name, t.type === 'income' ? t.amount : -t.amount, t.method, t.note || '', isRecurring(t) ? 'yes' : '']);
   const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
@@ -920,6 +1005,8 @@ const ACTIONS = {
   },
   notifications: notificationsSheet,
   payments: paymentsSheet,
+  'recurring-picker': recurringPicker,
+  'toggle-recurring': toggleRecurring,
   lesson: lessonSheet,
   'data-menu': dataSheet,
   'export-csv': () => { exportCsv(); toast('CSV downloaded'); },

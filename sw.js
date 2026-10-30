@@ -1,6 +1,6 @@
 // Service worker: makes Jon Pocket installable and usable offline.
 // Bump CACHE when you change files so phones pick up the new version.
-const CACHE = 'rencana-v4';
+const CACHE = 'rencana-v5';
 const SHELL = [
   '/',
   '/index.html',
@@ -35,6 +35,7 @@ self.addEventListener('fetch', (event) => {
   const sameOrigin = url.origin === self.location.origin;
   const isFont = url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com');
   if (!sameOrigin && !isFont) return;
+  if (sameOrigin && url.pathname.startsWith('/api/')) return; // never cache account or sync data
 
   event.respondWith(
     fetch(req)

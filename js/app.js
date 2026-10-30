@@ -1,5 +1,5 @@
 // Jon Pocket — budget tracker web app (no framework, no build step).
-import { load, save, emptyState, STORAGE_KEY } from './data.js';
+import { load, save, emptyState, STORAGE_KEY, toDoc, mergeDocs, loadCloudMeta, saveCloudMeta } from './data.js';
 import {
   idr, idrSigned, idrShort, parseAmount, groupDigits, isoDate, monthKey, monthLabel, shortMonth,
   shortDay, esc, uid
@@ -15,7 +15,9 @@ function commit(msg) {
   save(state);
   render();
   if (msg) toast(msg);
+  schedulePush();
 }
+const stamp = () => Date.now();
 
 /* =========================================================
    Derived numbers
@@ -180,6 +182,13 @@ const PAGES = {
             ${s.done ? '' : svg('chev', 'style="width:16px;height:16px;fill:none;stroke:#A3A3B8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"')}
           </button>`).join('')}
       </section>` : ''}
+
+      ${cloud.available && !cloud.email ? `
+      <button type="button" class="tile-btn" data-action="open-auth" style="width:100%">
+        <span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('shield')}</span>
+          <span class="stack" style="gap:0"><span class="t-strong">Back up your data</span><span class="t-small">Sign in to sync across your devices</span></span></span>
+        ${svg('chev', 'class="chev"')}
+      </button>` : ''}
 
       <section class="hero" aria-label="Spending this month">
         <div class="between" style="align-items:center">
@@ -496,7 +505,7 @@ function actionButton(kind) {
 function appbarHtml(page) {
   if (page.header === 'welcome') {
     return `
-      <a class="avatar" href="#/home" aria-label="Jon Pocket home"><span class="logo-n">n</span><span class="logo-dot"></span></a>
+      <button type="button" class="avatar" data-action="data-menu" aria-label="Account and data" style="cursor:pointer"><span class="logo-n">n</span><span class="logo-dot"></span></button>
       <div class="appbar-title">${state.prefs.name
         ? `<span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1>`
         : `<span class="hello">Welcome to</span><h1>Jon Pocket</h1>`}</div>
@@ -612,7 +621,7 @@ function saveTx() {
   if (!txDraft.date) { $('#tx-error').textContent = 'Pick a date.'; return; }
   const rec = {
     id: txDraft.id || uid(), type: txDraft.type, cat: txDraft.cat, amount: Math.round(amount),
-    name: txDraft.name.trim() || CATEGORIES[txDraft.cat].label, note: txDraft.note.trim(), date: txDraft.date, method: txDraft.method
+    name: txDraft.name.trim() || CATEGORIES[txDraft.cat].label, note: txDraft.note.trim(), date: txDraft.date, method: txDraft.method, u: stamp()
   };
   const i = state.transactions.findIndex((t) => t.id === rec.id);
   if (i >= 0) state.transactions[i] = rec; else state.transactions.push(rec);
@@ -643,6 +652,7 @@ function budgetSheet(cat) {
     const limit = parseAmount(f.limit.value);
     if (!limit || limit <= 0) { $('#budget-error').textContent = 'Enter a limit above zero.'; return; }
     state.budgets[f.cat.value || current] = Math.round(limit);
+    state.budgetsU = stamp();
     closeSheet();
     commit(editing ? 'Budget updated' : 'Budget added');
   });
@@ -677,6 +687,7 @@ function goalSheet(id) {
     const amt = parseAmount($('#goal-form').amount.value);
     if (!amt || amt <= 0) { $('#goal-error').textContent = 'Enter an amount above zero.'; return; }
     g.saved = Math.max(0, g.saved + (goalMode === 'add' ? amt : -amt));
+    g.u = stamp();
     closeSheet();
     commit(goalMode === 'add' ? `Added ${idr(amt)} to ${g.name}` : `Took ${idr(amt)} from ${g.name}`);
   });
@@ -705,7 +716,7 @@ function newGoalSheet() {
     const saved = parseAmount(f.saved.value) || 0;
     if (!name) { $('#newgoal-error').textContent = 'Give your goal a name.'; f.name.focus(); return; }
     if (!target || target <= 0) { $('#newgoal-error').textContent = 'Enter a target above zero.'; return; }
-    state.goals.push({ id: uid(), name, icon: newGoalIcon, color: GOAL_COLORS[state.goals.length % GOAL_COLORS.length], saved: Math.round(saved), target: Math.round(target), due: f.due.value || def, members: [] });
+    state.goals.push({ id: uid(), name, icon: newGoalIcon, color: GOAL_COLORS[state.goals.length % GOAL_COLORS.length], saved: Math.round(saved), target: Math.round(target), due: f.due.value || def, members: [], u: stamp() });
     closeSheet();
     commit('Goal created');
   });
@@ -736,9 +747,28 @@ function lessonSheet() {
     <p class="t-body" style="color:var(--ink-2)">It’s a starting point, not a law. If rent is high where you live, needs may take more. Just keep savings growing every month.</p>
     <a class="btn primary" href="#/plan/goals" style="display:flex;align-items:center;justify-content:center;text-decoration:none">See my 50/30/20 check</a>`);
 }
+function cloudCard() {
+  if (window.RENCANA_PREVIEW) return '<p class="t-body" style="color:var(--ink-2)">This preview saves data only in this browser. Cloud sync works on the live site.</p>';
+  const box = (inner) => `<div class="stack" style="gap:10px;background:var(--primary-50);border-radius:16px;padding:16px">${inner}</div>`;
+  if (cloud.available === false) {
+    return box(`<span class="t-strong">Cloud sync</span><span class="t-small">${cloud.reason === 'no_db'
+      ? 'The cloud database isn’t connected to this site yet. Follow the setup steps in the README, then reload.'
+      : 'Cloud sync isn’t available here. Open the live site to sign in. Your data is saved on this device.'}</span>`);
+  }
+  if (!cloud.email) {
+    return box(`<span class="t-strong">Back up and sync</span>
+      <span class="t-small">Sign in to keep your data safe in the cloud and use it on your phone and computer.</span>
+      <button type="button" class="btn primary" data-action="open-auth" style="min-height:46px">Sign in or create account</button>`);
+  }
+  return box(`<div class="between"><span class="stack" style="gap:0;min-width:0"><span class="t-small">Signed in as</span><span class="t-strong ellipsis">${esc(cloud.email)}</span></span>
+      <span class="chip lg" id="sync-chip" style="${syncChipStyle()}">${esc(syncLabel())}</span></div>
+    <div class="btn-row"><button type="button" class="btn" style="min-height:44px;background:#fff;color:var(--primary)" data-action="sync-now">Sync now</button>
+      <button type="button" class="btn" style="min-height:44px;background:#fff;color:var(--ink-2)" data-action="sign-out">Sign out</button></div>`);
+}
+
 function dataSheet() {
   openSheet('Your data', `
-    <p class="t-body" style="color:var(--ink-2)">Everything is saved only in this browser on this device. Nothing is sent to a server.</p>
+    <div id="cloud-card">${cloudCard()}</div>
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
     <label class="tile-btn" style="box-shadow:none;border:1px solid var(--line);cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
@@ -800,6 +830,7 @@ function importCsvText(text) {
       note: ((iNote >= 0 ? r[iNote] : '') || '').trim()
     };
     if (existing.has(key(t))) { skipped++; continue; }
+    t.u = stamp();
     existing.add(key(t)); state.transactions.push(t); added++;
   }
   return { added, skipped, bad };
@@ -852,6 +883,7 @@ const ACTIONS = {
     const id = txDraft.id;
     askConfirm('Delete transaction?', `"${txDraft.name || 'This transaction'}" will be removed.`, 'Delete', () => {
       state.transactions = state.transactions.filter((t) => t.id !== id);
+      state.deleted[id] = stamp();
       closeSheet(); commit('Transaction deleted');
     });
   },
@@ -868,7 +900,7 @@ const ACTIONS = {
   'set-monthly': (el) => { state.prefs.monthly = Number(el.dataset.value); commit(); },
   'add-budget': () => budgetSheet(),
   'edit-budget': (el) => budgetSheet(el.dataset.id),
-  'delete-budget': (el) => { delete state.budgets[el.dataset.id]; closeSheet(); commit('Budget removed'); },
+  'delete-budget': (el) => { delete state.budgets[el.dataset.id]; state.budgetsU = stamp(); closeSheet(); commit('Budget removed'); },
   'add-goal': () => { newGoalIcon = 'goal'; newGoalSheet(); },
   'edit-goal': (el) => { goalMode = 'add'; goalSheet(el.dataset.id); },
   'goal-mode': (el) => { goalMode = el.dataset.value; pressIn(el, 'goal-mode'); },
@@ -882,6 +914,7 @@ const ACTIONS = {
     const g = state.goals.find((x) => x.id === id);
     askConfirm('Delete goal?', `"${g ? g.name : 'This goal'}" and its saved amount will be removed.`, 'Delete', () => {
       state.goals = state.goals.filter((x) => x.id !== id);
+      state.deleted[id] = stamp();
       closeSheet(); commit('Goal deleted');
     });
   },
@@ -890,9 +923,20 @@ const ACTIONS = {
   lesson: lessonSheet,
   'data-menu': dataSheet,
   'export-csv': () => { exportCsv(); toast('CSV downloaded'); },
-  'start-empty': () => askConfirm('Delete all data?', 'Every transaction, budget and goal on this device will be removed. This cannot be undone.', 'Delete all', () => {
-    const name = state.prefs.name; state = emptyState(); state.prefs.name = name; closeSheet(); commit('All data deleted');
+  'start-empty': () => askConfirm('Delete all data?',
+    cloud.email ? 'Every transaction, budget and goal will be removed from this device and from your cloud account. This cannot be undone.'
+      : 'Every transaction, budget and goal on this device will be removed. This cannot be undone.', 'Delete all', () => {
+    const t = stamp();
+    const deleted = { ...state.deleted };
+    for (const x of [...state.transactions, ...state.goals]) deleted[x.id] = t;
+    const { prefs, nameU } = state;
+    state = emptyState(); state.prefs = prefs; state.nameU = nameU; state.deleted = deleted; state.budgetsU = t;
+    closeSheet(); commit('All data deleted');
   }),
+  'open-auth': () => authSheet('signin'),
+  'auth-mode': (el) => authSheet(el.dataset.value, true),
+  'sync-now': () => { syncNow(true); },
+  'sign-out': () => askConfirm('Sign out?', 'Your data stays safe in your account. It will be removed from this device until you sign in again.', 'Sign out', signOut),
   'open-income': () => { txSheet(); txDraft.type = 'income'; txDraft.method = 'Bank transfer'; drawTxSheet(); },
   soon: (el) => toast(`${el.dataset.value} is coming soon`)
 };
@@ -923,7 +967,9 @@ document.addEventListener('input', (e) => {
   }
   if (el.id === 'name-input') {
     state.prefs.name = el.value.trim();
+    state.nameU = stamp();
     save(state);
+    schedulePush();
     if (currentTab === 'home') $('#appbar').innerHTML = appbarHtml({ header: 'welcome' });
   }
 });
@@ -958,9 +1004,209 @@ function toast(msg) {
 /* Keep data in sync if the app is open in two tabs */
 window.addEventListener('storage', (e) => { if (e.key === STORAGE_KEY) { state = load(); render(); } });
 
+/* =========================================================
+   Cloud sync (Cloudflare Pages Functions + D1)
+   ========================================================= */
+const cloud = {
+  available: window.RENCANA_PREVIEW ? false : null, // null = not checked yet
+  reason: '', needsCode: false,
+  email: null, version: 0, status: 'idle', lastSync: 0, lastPushed: ''
+};
+{
+  const meta = loadCloudMeta();
+  if (meta.email && !window.RENCANA_PREVIEW) { cloud.email = meta.email; cloud.version = meta.version || 0; cloud.lastSync = meta.lastSync || 0; }
+}
+const persistMeta = () => saveCloudMeta(cloud.email ? { email: cloud.email, version: cloud.version, lastSync: cloud.lastSync } : {});
+
+function syncLabel() {
+  if (cloud.status === 'syncing') return 'Syncing…';
+  if (cloud.status === 'offline') return 'Offline';
+  if (cloud.status === 'error') return 'Not synced';
+  if (!cloud.lastSync) return 'Not synced yet';
+  const mins = Math.round((Date.now() - cloud.lastSync) / 60000);
+  return mins < 1 ? 'Synced just now' : mins < 60 ? `Synced ${mins} min ago` : `Synced ${new Date(cloud.lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+}
+function syncChipStyle() {
+  return cloud.status === 'error' || cloud.status === 'offline' ? 'background:#FDE7E7;color:#B42318' : 'background:#fff;color:var(--pos)';
+}
+function refreshCloudUi() {
+  const card = $('#cloud-card');
+  if (card) card.innerHTML = cloudCard();
+}
+function setStatus(s) { cloud.status = s; refreshCloudUi(); }
+
+async function api(path, opts = {}) {
+  const res = await fetch('/api/' + path, {
+    method: opts.method || 'GET',
+    credentials: 'same-origin',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined
+  });
+  let data = null;
+  const type = res.headers.get('Content-Type') || '';
+  if (type.includes('application/json')) data = await res.json().catch(() => null);
+  return { ok: res.ok, status: res.status, data, json: !!data };
+}
+
+function applyDoc(doc) {
+  state.transactions = doc.transactions || [];
+  state.goals = doc.goals || [];
+  state.budgets = doc.budgets || {};
+  state.budgetsU = doc.budgetsU || 0;
+  state.deleted = doc.deleted || {};
+  state.openingBalance = doc.openingBalance || 0;
+  state.prefs.name = doc.name || '';
+  state.nameU = doc.nameU || 0;
+  save(state);
+}
+
+let pushTimer = null, busy = false, again = false;
+function schedulePush() {
+  if (!cloud.email || cloud.available === false) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => syncNow(false), 1200);
+}
+
+/** Pull the cloud copy, merge it with this device, and upload the result if anything changed. */
+async function syncNow(manual) {
+  if (!cloud.email || cloud.available === false) return;
+  if (busy) { again = true; return; }
+  if (!navigator.onLine) { setStatus('offline'); return; }
+  busy = true; setStatus('syncing');
+  try {
+    const got = await api('state');
+    if (got.status === 401) return sessionExpired();
+    if (!got.ok || !got.json) throw new Error(got.data?.error || 'Sync failed');
+    let serverVersion = got.data.version;
+    let merged = mergeDocs(toDoc(state), got.data.doc || {});
+    const before = JSON.stringify(toDoc(state));
+    if (JSON.stringify(merged) !== before) { applyDoc(merged); render(); }
+
+    let text = JSON.stringify(merged);
+    if (text !== JSON.stringify(got.data.doc) ) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const put = await api('state', { method: 'PUT', body: { doc: merged, baseVersion: serverVersion } });
+        if (put.ok) { serverVersion = put.data.version; break; }
+        if (put.status === 409 && put.data) {
+          merged = mergeDocs(toDoc(state), put.data.doc || {});
+          applyDoc(merged); render();
+          serverVersion = put.data.version;
+          continue;
+        }
+        if (put.status === 401) return sessionExpired();
+        throw new Error(put.data?.error || 'Sync failed');
+      }
+    }
+    cloud.version = serverVersion; cloud.lastSync = Date.now(); cloud.lastPushed = text;
+    persistMeta(); setStatus('synced');
+    if (manual) toast('Synced');
+  } catch (e) {
+    setStatus(navigator.onLine ? 'error' : 'offline');
+    if (manual) toast(navigator.onLine ? 'Couldn’t sync. Try again in a moment.' : 'You’re offline. It will sync when you’re back online.');
+  } finally {
+    busy = false;
+    if (again) { again = false; schedulePush(); }
+  }
+}
+
+function sessionExpired() {
+  cloud.email = null; cloud.version = 0; persistMeta(); setStatus('idle');
+  toast('Your session ended. Sign in again to keep syncing.');
+}
+
+async function checkCloud() {
+  if (window.RENCANA_PREVIEW) return;
+  try {
+    const me = await api('me');
+    if (!me.json) { cloud.available = false; cloud.reason = 'missing'; refreshCloudUi(); return; }
+    if (me.status === 503) { cloud.available = false; cloud.reason = me.data.code || 'no_db'; refreshCloudUi(); return; }
+    cloud.available = true;
+    cloud.needsCode = !!me.data.needsCode;
+    if (me.data.signedIn) {
+      cloud.email = me.data.email; persistMeta();
+      syncNow(false);
+    } else if (cloud.email) {
+      sessionExpired();
+    }
+    refreshCloudUi();
+    if (currentTab === 'home') render();
+  } catch (e) {
+    // offline or no server: keep working locally
+    if (cloud.email) setStatus('offline');
+  }
+}
+
+let authMode = 'signin';
+function authSheet(mode = 'signin', redraw = false) {
+  authMode = mode;
+  const create = mode === 'create';
+  const body = `
+    <form id="auth-form" class="stack" style="gap:16px" novalidate>
+      ${seg([['signin', 'Sign in'], ['create', 'Create account']], 'auth-mode', mode)}
+      <p class="t-body" style="color:var(--ink-2)">${create
+        ? 'Create an account to back up your data. Anything already on this device will be added to it.'
+        : 'Sign in to load your data. Anything on this device will be merged with your account.'}</p>
+      <label class="field"><span>Email</span><input class="input" type="email" name="email" id="auth-email" autocomplete="email" inputmode="email" required></label>
+      <label class="field"><span>Password${create ? ' (at least 8 characters)' : ''}</span><input class="input" type="password" name="password" id="auth-password" autocomplete="${create ? 'new-password' : 'current-password'}" minlength="8" required></label>
+      ${create && cloud.needsCode ? '<label class="field"><span>Invite code</span><input class="input" name="code" id="auth-code" autocomplete="off" required></label>' : ''}
+      <p class="t-small neg" id="auth-error" role="alert"></p>
+      <button type="submit" class="btn primary" id="auth-submit">${create ? 'Create account' : 'Sign in'}</button>
+    </form>`;
+  const keep = redraw ? { email: $('#auth-email')?.value || '' } : null;
+  if (sheetEl.hidden || !redraw) openSheet(create ? 'Create account' : 'Sign in', body, submitAuth);
+  else { $('#sheet-title').textContent = create ? 'Create account' : 'Sign in'; $('#sheet-body').innerHTML = body; sheetSubmit = submitAuth; }
+  if (keep) $('#auth-email').value = keep.email;
+}
+
+async function submitAuth() {
+  const f = $('#auth-form');
+  const err = $('#auth-error');
+  const email = f.email.value.trim();
+  const password = f.password.value;
+  if (!email || !password) { err.textContent = 'Enter your email and password.'; return; }
+  if (authMode === 'create' && password.length < 8) { err.textContent = 'Use a password with at least 8 characters.'; return; }
+  const btn = $('#auth-submit'); btn.disabled = true; btn.textContent = authMode === 'create' ? 'Creating account…' : 'Signing in…';
+  try {
+    const res = await api(authMode === 'create' ? 'signup' : 'login', { method: 'POST', body: { email, password, code: f.code ? f.code.value.trim() : undefined } });
+    if (!res.ok) {
+      err.textContent = res.data?.error || (res.json ? 'That didn’t work. Try again.' : 'Cloud sync isn’t available here.');
+      btn.disabled = false; btn.textContent = authMode === 'create' ? 'Create account' : 'Sign in';
+      return;
+    }
+    cloud.available = true;
+    cloud.email = res.data.email; cloud.version = 0; persistMeta();
+    closeSheet();
+    toast(authMode === 'create' ? 'Account created. Backing up your data…' : 'Signed in. Syncing your data…');
+    await syncNow(false);
+  } catch (e) {
+    err.textContent = 'Couldn’t reach the server. Check your connection and try again.';
+    btn.disabled = false; btn.textContent = authMode === 'create' ? 'Create account' : 'Sign in';
+  }
+}
+
+async function signOut() {
+  clearTimeout(pushTimer);
+  try { if (navigator.onLine) await syncNow(false); } catch (e) { /* ignore */ }
+  try { await api('logout', { method: 'POST', body: {} }); } catch (e) { /* ignore */ }
+  cloud.email = null; cloud.version = 0; cloud.lastSync = 0; persistMeta();
+  const prefs = { ...state.prefs, name: '' };
+  state = emptyState(); state.prefs = prefs; save(state);
+  closeSheet(); render(); toast('Signed out');
+}
+
+window.addEventListener('online', () => { if (cloud.email) syncNow(false); });
+let lastFocusSync = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && cloud.email && Date.now() - lastFocusSync > 30000) {
+    lastFocusSync = Date.now();
+    syncNow(false);
+  }
+});
+
 /* Installable + offline */
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
 
 render();
+checkCloud();

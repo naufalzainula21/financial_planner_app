@@ -7,12 +7,13 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 | Tab | Features |
 |---|---|
 | **Home** | Get-started checklist for new users, welcome header, purple "Spent" card with ring progress, balance / income / saved, round category shortcuts, budget tip banner, recent transactions |
-| **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, export CSV, delete all data, change your name |
+| **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
+| **Account** (tap the logo, or Transactions → sliders) | Sign in / create account, cloud backup and sync across devices, sync now, sign out |
 | **+ (centre)** | Add income or expense |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
 | **Plan** | Budgets (ring, daily allowance, per-category limits), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
 
-Data is saved in the browser's `localStorage` on that device only. There is no account or server yet.
+Data is always saved on the device first (`localStorage`), so the app works offline. When you sign in, it also syncs to your account in the cloud (Cloudflare D1) and merges changes from your other devices.
 
 ## Project structure
 
@@ -28,7 +29,12 @@ rencana/
 ├── manifest.webmanifest   Makes it installable
 ├── sw.js                  Offline support (service worker)
 ├── icons/                 App icons (svg + png)
-└── _headers               Cloudflare Pages headers
+├── _headers               Cloudflare Pages headers
+├── functions/api/         Server (Cloudflare Pages Functions)
+│   ├── _middleware.js     Database check, origin check, session lookup
+│   ├── signup.js login.js logout.js me.js
+│   └── state.js           Load / save your data (versioned)
+└── server/lib.js          Password hashing, sessions, database tables
 ```
 
 ## Run it locally in VS Code
@@ -72,6 +78,29 @@ npx wrangler pages deploy . --project-name rencana
 
 **Custom domain:** in the Pages project → Custom domains → add your domain.
 
+## Cloud sync setup (one time)
+
+The server code deploys automatically with the site. It just needs a database:
+
+1. Cloudflare dashboard → **Storage & databases** → **D1 SQL database** → **Create**. Name it `jon-pocket` → **Create**.
+2. **Workers & Pages** → your project (`financial-planner-app`) → **Settings** → **Bindings** → **Add** → **D1 database**.
+   - Variable name: **`DB`** (exactly, in capitals)
+   - D1 database: **jon-pocket** → **Save**
+3. **Deployments** → latest deployment → **⋯** → **Retry deployment** (bindings only apply to new deployments).
+4. Open the site → tap the logo → **Sign in or create account**.
+
+The tables are created automatically on first use.
+
+**Optional: lock sign-ups.** Settings → **Variables and secrets** → **Add** → type *Secret*, name `SIGNUP_CODE`, value of your choice → redeploy. New accounts then need that invite code.
+
+**Run with the server locally:**
+```bash
+npx wrangler pages dev . --d1 DB=jon-pocket-local
+```
+(Live Server works too, but without sign-in.)
+
+**How syncing works:** every change is saved on the device, then uploaded about a second later. Each transaction and goal carries an edit time, so if two devices change things at the same time the app merges them item by item (newest edit wins, deletions are kept). Passwords are hashed (PBKDF2), sessions use an HttpOnly cookie for 90 days, and repeated wrong passwords are blocked for 15 minutes.
+
 ## Install on a phone
 - **iPhone (Safari):** open your `.pages.dev` link → Share → **Add to Home Screen**.
 - **Android (Chrome):** open the link → menu ⋮ → **Install app**.
@@ -79,12 +108,12 @@ npx wrangler pages deploy . --project-name rencana
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v3'` to `'rencana-v4'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v5'` to `'rencana-v6'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.
 
 ## Next steps (when you're ready)
-- **Accounts & sync across devices:** add a backend — e.g. Cloudflare D1 (database) + Pages Functions, or Supabase / Firebase.
+- **Bank email sync:** forward bank emails to a Cloudflare Email Worker that adds transactions to your account.
 - **Live stock & crypto prices:** call a quotes API from a Pages Function so your API key stays secret.
 - **Bigger app:** move to Vite + React or SvelteKit once screens multiply; Cloudflare Pages supports both.

@@ -29,11 +29,34 @@ const toDate = (iso) => new Date(iso + 'T00:00:00');
 
 function totals(list) {
   let income = 0, expense = 0;
-  for (const t of list) t.type === 'income' ? (income += t.amount) : (expense += t.amount);
+  for (const t of list) {
+    if (t.type === 'income') income += t.amount;
+    else if (t.type === 'expense') expense += t.amount; // transfers between pockets are neither
+  }
   return { income, expense, net: income - expense };
 }
 const monthTx = () => state.transactions.filter((t) => inMonth(t));
-const balance = () => state.openingBalance + totals(state.transactions).net;
+/* ---------- Pockets (bank accounts and e-wallets) ---------- */
+const pockets = () => state.accounts || [];
+const pocketById = (id) => pockets().find((p) => p.id === id);
+// Transactions saved before pockets existed belong to BCA (or the first pocket)
+const legacyPocket = () => (pocketById('bca') ? 'bca' : (pockets()[0]?.id || ''));
+const pocketOf = (t) => (t.account && pocketById(t.account) ? t.account : legacyPocket());
+const pocketName = (id) => pocketById(id)?.name || 'No pocket';
+const newTxPocket = () => (pocketById(state.prefs.lastPocket) ? state.prefs.lastPocket : legacyPocket());
+function pocketBalance(id) {
+  const p = pocketById(id);
+  let bal = p ? (p.opening || 0) : 0;
+  for (const t of state.transactions) {
+    if (t.type === 'transfer') {
+      if (pocketOf(t) === id) bal -= t.amount;
+      if (t.toAccount === id) bal += t.amount;
+    } else if (pocketOf(t) === id) bal += t.type === 'income' ? t.amount : -t.amount;
+  }
+  return bal;
+}
+const balance = () => (state.openingBalance || 0) + pockets().reduce((s, p) => s + pocketBalance(p.id), 0);
+const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(p.kind === 'ewallet' ? 'wallet' : 'bank')}</span>`;
 const goalsSaved = () => state.goals.reduce((s, g) => s + g.saved, 0);
 
 function spentByCat(list) {
@@ -65,14 +88,30 @@ function budgetSummary() {
    Shared pieces
    ========================================================= */
 function txRow(t) {
+  if (t.type === 'transfer') {
+    return `
+    <div class="tx">
+      ${catTile('transfer')}
+      <div class="meta">
+        <span class="name ellipsis">${esc(t.name)}</span>
+        <span class="t-small ellipsis">${esc(pocketName(pocketOf(t)))} → ${esc(pocketName(t.toAccount))}</span>
+        <button type="button" class="view" data-action="edit-tx" data-id="${t.id}">View Details</button>
+      </div>
+      <div class="amt">
+        <b style="color:var(--ink-2)">${state.prefs.hide ? '••••' : idr(t.amount)}</b>
+        <span class="t-small">${shortDay(t.date)}</span>
+      </div>
+    </div>`;
+  }
   const c = CATEGORIES[t.cat] || CATEGORIES.other;
   const signed = t.type === 'income' ? t.amount : -t.amount;
+  const method = t.method && t.method !== 'Recurring' ? t.method : '';
   return `
     <div class="tx">
       ${catTile(t.cat)}
       <div class="meta">
         <span class="name ellipsis">${esc(t.name)}</span>
-        <span class="t-small ellipsis">${esc(t.method && t.method !== 'Recurring' ? t.method : c.label)}${isRecurring(t) ? ' · <span style="color:var(--primary);font-weight:500">Recurring</span>' : ''}</span>
+        <span class="t-small ellipsis">${esc(pocketName(pocketOf(t)))}${method ? ' · ' + esc(method) : ''}${isRecurring(t) ? ' · <span style="color:var(--primary);font-weight:500">Recurring</span>' : ''}</span>
         <button type="button" class="view" data-action="edit-tx" data-id="${t.id}">View Details</button>
       </div>
       <div class="amt">
@@ -164,6 +203,7 @@ const PAGES = {
     const topBudgets = Object.entries(state.budgets).sort((x, y) => pct(b.spent[y[0]] || 0, y[1]) - pct(b.spent[x[0]] || 0, x[1])).slice(0, 3);
     const isNew = !state.transactions.length;
     const steps = [
+      { done: pockets().some((p) => (p.u || 0) > 0), title: 'Set your pocket balances', sub: 'How much is in Jago, BCA, GoPay and OVO now', action: 'manage-pockets' },
       { done: state.transactions.some((t) => t.type === 'income'), title: 'Add your income', sub: 'Salary, freelance or any money in', action: 'open-income' },
       { done: !noBudget, title: 'Set a monthly budget', sub: 'Choose limits for food, transport and more', action: 'add-budget' },
       { done: state.goals.length > 0, title: 'Create a savings goal', sub: 'An emergency fund is a good first goal', action: 'add-goal' }
@@ -175,7 +215,7 @@ const PAGES = {
       html: `
       ${showSteps ? `
       <section class="card lg stack" aria-label="Get started" style="gap:12px">
-        <div class="stack" style="gap:2px"><span class="t-h3">Get started</span><span class="t-label">${steps.filter((s) => s.done).length} of 3 done</span></div>
+        <div class="stack" style="gap:2px"><span class="t-h3">Get started</span><span class="t-label">${steps.filter((s) => s.done).length} of ${steps.length} done</span></div>
         ${steps.map((s, i) => `
           <button type="button" class="row" data-action="${s.action}" ${s.done ? 'disabled' : ''} style="border:0;background:none;padding:6px 0;text-align:left;width:100%;color:var(--ink);opacity:${s.done ? 0.55 : 1}">
             <span style="width:32px;height:32px;border-radius:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;${s.done ? 'background:#E3F6EC;color:var(--pos)' : 'background:var(--primary-50);color:var(--primary)'}">${s.done ? '✓' : i + 1}</span>
@@ -202,6 +242,20 @@ const PAGES = {
           <div class="glass"><span class="t-small row" style="gap:6px">${svg('down', 'style="width:14px;height:14px;fill:none;stroke:#FFC9CF;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"')}Expenses</span><b style="font-size:16px">${money(m.expense)}</b></div>
         </div>
       </section>
+
+      <div class="section-head"><h2>Pockets</h2><button type="button" class="see-all" data-action="manage-pockets">Manage</button></div>
+      <div class="pocket-row" role="list">
+        ${pockets().map((p) => `
+          <button type="button" class="pocket-card" role="listitem" data-action="open-pocket" data-id="${p.id}">
+            ${pocketIcon(p, 36)}
+            <span class="t-small ellipsis" style="color:var(--ink-2)">${esc(p.name)}</span>
+            <b class="ellipsis">${money(pocketBalance(p.id), true)}</b>
+          </button>`).join('')}
+        <button type="button" class="pocket-card add" data-action="add-pocket">
+          <span class="pocket-icon" style="width:36px;height:36px;background:var(--primary-50);color:var(--primary)">${svg('plus')}</span>
+          <span class="t-small" style="color:var(--primary);font-weight:600">Add pocket</span>
+        </button>
+      </div>
 
       <section class="card lg stack" aria-label="Spent this month" style="gap:12px">
         <div class="between"><span class="t-h3">Spent this month</span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
@@ -260,6 +314,7 @@ const PAGES = {
         </label>
         <button type="button" class="icon-btn soft" data-action="data-menu" aria-label="Data options">${svg('sliders')}</button>
       </div>
+      ${textTabs([['all', 'All pockets'], ...pockets().map((p) => [p.id, p.name])], 'pocket-filter-here', pocketById(state.prefs.pocketFilter) ? state.prefs.pocketFilter : 'all', 'Filter by pocket')}
       <div class="cat-grid five" role="group" aria-label="Filter by category">
         ${TX_FILTERS.map(([id, label, icon]) => `
           <button type="button" class="cat-btn" data-action="cat-filter-here" data-value="${id}" aria-pressed="${id === f}">
@@ -476,9 +531,16 @@ function planPortfolio() {
 
 /* Transactions list is rendered separately so typing in search keeps focus. */
 let activitySearch = '';
+function matchesPocket(t) {
+  const pf = state.prefs.pocketFilter;
+  if (!pf || pf === 'all' || !pocketById(pf)) return true;
+  return pocketOf(t) === pf || (t.type === 'transfer' && t.toAccount === pf);
+}
 function matchesFilter(t, f) {
+  if (!matchesPocket(t)) return false;
   if (f === 'all') return true;
   if (f === 'income') return t.type === 'income';
+  if (t.type === 'transfer') return false;
   if (f === 'recurring') return isRecurring(t);
   return t.cat === f;
 }
@@ -601,14 +663,19 @@ let txDraft = null;
 const METHODS = ['Debit card', 'Credit card', 'E-wallet', 'QRIS', 'Bank transfer', 'Cash', 'Split bill'];
 
 function txSheet(existing) {
-  txDraft = existing ? { ...existing } : { id: null, type: 'expense', cat: 'food', amount: '', name: '', note: '', date: isoDate(now()), method: 'Debit card' };
+  txDraft = existing ? { ...existing, account: pocketOf(existing) }
+    : { id: null, type: 'expense', cat: 'food', amount: '', name: '', note: '', date: isoDate(now()), method: 'Debit card', account: newTxPocket() };
+  if (!txDraft.toAccount) txDraft.toAccount = (pockets().find((p) => p.id !== txDraft.account) || {}).id || '';
   drawTxSheet();
 }
 function readTxForm() {
   const f = $('#tx-form');
   if (!f) return;
   txDraft.amount = f.amount.value; txDraft.name = f.name.value; txDraft.date = f.date.value;
-  txDraft.method = f.method.value; txDraft.note = f.note.value;
+  if (f.method) txDraft.method = f.method.value;
+  txDraft.note = f.note.value;
+  if (f.account) txDraft.account = f.account.value;
+  if (f.toAccount) txDraft.toAccount = f.toAccount.value;
   txDraft.recurring = !!(f.recurring && f.recurring.checked);
 }
 function drawTxSheet() {
@@ -616,12 +683,19 @@ function drawTxSheet() {
   const cats = catsOf(d.type);
   if (!cats.includes(d.cat)) d.cat = cats[0];
   const amount = typeof d.amount === 'number' ? groupDigits(d.amount) : d.amount;
+  const isTransfer = d.type === 'transfer';
+  const pocketSelect = (name, value, label) => `<label class="field"><span>${label}</span><select class="input" name="${name}">${pockets().map((p) => `<option value="${p.id}" ${p.id === value ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>`;
   const body = `
     <form id="tx-form" class="stack" style="gap:16px" novalidate>
-      ${seg([['expense', 'Expense'], ['income', 'Income']], 'tx-type', d.type)}
+      ${seg([['expense', 'Expense'], ['income', 'Income'], ['transfer', 'Transfer']], 'tx-type', d.type)}
       <label class="field"><span>Amount</span>
         <span class="amount-input"><b>Rp</b><input name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(amount)}" data-money required></span>
       </label>
+      ${isTransfer ? `
+      <div class="grid-2">${pocketSelect('account', d.account, 'From')}${pocketSelect('toAccount', d.toAccount, 'To')}</div>
+      <p class="t-small" style="margin-top:-8px">Moving money between your pockets, like a GoPay top-up from BCA. It isn't counted as income or spending.</p>
+      <label class="field"><span>Description (optional)</span><input class="input" name="name" maxlength="60" placeholder="e.g. GoPay top-up" value="${esc(d.name)}"></label>
+      <label class="field"><span>Date</span><input class="input" type="date" name="date" value="${esc(d.date)}" required></label>` : `
       <div class="field"><span>Category</span>
         <div class="pills" role="group" aria-label="Category">
           ${cats.map((c) => `<button type="button" class="pill" data-action="tx-cat" data-value="${c}" aria-pressed="${c === d.cat}">${CATEGORIES[c].label}</button>`).join('')}
@@ -629,9 +703,10 @@ function drawTxSheet() {
       </div>
       <label class="field"><span>Description</span><input class="input" name="name" maxlength="60" placeholder="${d.type === 'expense' ? 'e.g. Lunch with team' : 'e.g. Monthly salary'}" value="${esc(d.name)}"></label>
       <div class="grid-2">
-        <label class="field"><span>Date</span><input class="input" type="date" name="date" value="${esc(d.date)}" required></label>
+        ${pocketSelect('account', d.account, d.type === 'income' ? 'Into pocket' : 'From pocket')}
         <label class="field"><span>Paid with</span><select class="input" name="method">${(METHODS.includes(d.method) || !d.method || d.method === 'Recurring' ? METHODS : [...METHODS, d.method]).map((m) => `<option ${m === d.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
       </div>
+      <label class="field"><span>Date</span><input class="input" type="date" name="date" value="${esc(d.date)}" required></label>`}
       ${d.type === 'expense' ? `<label class="check-row"><input type="checkbox" name="recurring" ${isRecurring(d) ? 'checked' : ''}>
         <span class="stack" style="gap:0"><span class="t-strong">Recurring payment</span><span class="t-small">Repeats every month, like rent, bills or subscriptions</span></span></label>` : ''}
       <label class="field"><span>Note (optional)</span><input class="input" name="note" maxlength="120" value="${esc(d.note)}"></label>
@@ -650,10 +725,24 @@ function saveTx() {
   const amount = parseAmount(txDraft.amount);
   if (!amount || amount <= 0) { $('#tx-error').textContent = 'Enter an amount above zero.'; $('#tx-form').amount.focus(); return; }
   if (!txDraft.date) { $('#tx-error').textContent = 'Pick a date.'; return; }
+  if (!pockets().length) { $('#tx-error').textContent = 'Add a pocket first (Home → Pockets → Add pocket).'; return; }
+  if (txDraft.type === 'transfer') {
+    if (!txDraft.account || !txDraft.toAccount || txDraft.account === txDraft.toAccount) { $('#tx-error').textContent = 'Choose two different pockets.'; return; }
+    const tr = {
+      id: txDraft.id || uid(), type: 'transfer', cat: 'transfer', amount: Math.round(amount), account: txDraft.account, toAccount: txDraft.toAccount,
+      name: txDraft.name.trim() || `Transfer to ${pocketName(txDraft.toAccount)}`, note: txDraft.note.trim(), date: txDraft.date, method: 'Transfer', u: stamp()
+    };
+    const j = state.transactions.findIndex((t) => t.id === tr.id);
+    if (j >= 0) state.transactions[j] = tr; else state.transactions.push(tr);
+    closeSheet();
+    commit(j >= 0 ? 'Transfer updated' : 'Transfer saved');
+    return;
+  }
+  state.prefs.lastPocket = txDraft.account;
   const rec = {
     id: txDraft.id || uid(), type: txDraft.type, cat: txDraft.cat, amount: Math.round(amount),
     name: txDraft.name.trim() || CATEGORIES[txDraft.cat].label, note: txDraft.note.trim(), date: txDraft.date, method: txDraft.method === 'Recurring' ? 'Bank transfer' : txDraft.method,
-    recurring: txDraft.type === 'expense' && !!txDraft.recurring, u: stamp()
+    recurring: txDraft.type === 'expense' && !!txDraft.recurring, account: txDraft.account || legacyPocket(), u: stamp()
   };
   const i = state.transactions.findIndex((t) => t.id === rec.id);
   if (i >= 0) state.transactions[i] = rec; else state.transactions.push(rec);
@@ -761,6 +850,96 @@ function notificationsSheet() {
     <div class="tx">${n.goal ? goalTile(n.goal.icon, n.goal.color) : catTile(n.icon)}<span class="t-body">${esc(n.text)}</span></div>`).join('')}</div>`
     : '<p class="empty">You’re all caught up.</p>');
 }
+/* ---------- Pocket sheets ---------- */
+const POCKET_COLORS = ['#0B5CAB', '#E89A00', '#00A6CF', '#4C3494', '#1FAA6B', '#E0457B', '#5B4CF0', '#44435A'];
+const pocketHasTx = (id) => state.transactions.some((t) => t.account === id || t.toAccount === id);
+
+function setSheet(title, body, submit = null) {
+  if (sheetEl.hidden) openSheet(title, body, submit);
+  else { $('#sheet-title').textContent = title; $('#sheet-body').innerHTML = body; sheetSubmit = submit; }
+}
+
+function managePockets() {
+  setSheet('Pockets', `
+    <p class="t-body" style="color:var(--ink-2)">Your bank accounts and e-wallets. Set each balance to what you see in that app today.</p>
+    <div class="list-card">
+      ${pockets().map((p) => `
+        <div class="tx">
+          ${pocketIcon(p)}
+          <div class="meta"><span class="name ellipsis">${esc(p.name)}</span><span class="t-small">${p.kind === 'ewallet' ? 'E-wallet' : 'Bank'} · ${money(pocketBalance(p.id))}</span></div>
+          <button type="button" class="pill" data-action="edit-pocket" data-id="${p.id}" style="flex-shrink:0;min-height:36px">Edit</button>
+        </div>`).join('') || '<p class="empty">No pockets yet.</p>'}
+    </div>
+    <button type="button" class="btn primary" data-action="add-pocket">+ Add pocket</button>`);
+}
+
+function openPocket(id) {
+  const p = pocketById(id);
+  if (!p) return;
+  const list = sortedTx(state.transactions.filter((t) => pocketOf(t) === id || t.toAccount === id));
+  const month = list.filter((t) => inMonth(t));
+  let inM = 0, outM = 0;
+  for (const t of month) {
+    if (t.type === 'transfer') { if (t.toAccount === id) inM += t.amount; else outM += t.amount; }
+    else if (t.type === 'income') inM += t.amount; else outM += t.amount;
+  }
+  setSheet(p.name, `
+    <div class="stack" style="gap:6px;background:${p.color}14;border-radius:18px;padding:16px">
+      <div class="row" style="gap:12px">${pocketIcon(p, 44)}<span class="stack" style="gap:0"><span class="t-small">${p.kind === 'ewallet' ? 'E-wallet' : 'Bank account'} balance</span><span class="t-stat">${money(pocketBalance(id))}</span></span></div>
+      <div class="between t-small" style="padding-top:6px"><span>In this month: <b class="pos">${money(inM, true)}</b></span><span>Out: <b class="neg">${money(outM, true)}</b></span></div>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn" style="min-height:46px;background:var(--chip);color:var(--ink)" data-action="edit-pocket" data-id="${id}">Edit pocket</button>
+      <button type="button" class="btn" style="min-height:46px;background:var(--primary-50);color:var(--primary)" data-action="pocket-transactions" data-id="${id}">All transactions</button>
+    </div>
+    <div class="section-head" style="margin:0"><h2 style="font-size:15px">Recent</h2></div>
+    ${list.length ? txList(list.slice(0, 6)) : '<p class="empty">No transactions in this pocket yet.</p>'}`);
+}
+
+let pocketDraft = null;
+function pocketForm(id) {
+  const p = id ? pocketById(id) : null;
+  pocketDraft = p ? { ...p } : { id: null, name: '', kind: 'bank', color: POCKET_COLORS[pockets().length % POCKET_COLORS.length] };
+  drawPocketForm(p ? groupDigits(Math.max(0, pocketBalance(p.id))) : '');
+}
+function drawPocketForm(balanceText, nameText) {
+  const d = pocketDraft;
+  setSheet(d.id ? `Edit ${d.name}` : 'Add pocket', `
+    <form id="pocket-form" class="stack" style="gap:16px" novalidate>
+      <label class="field"><span>Name</span><input class="input" name="name" maxlength="30" placeholder="e.g. Bank Jago, Dana, Cash" value="${esc(nameText ?? d.name)}" required></label>
+      ${seg([['bank', 'Bank account'], ['ewallet', 'E-wallet']], 'pocket-kind', d.kind)}
+      <label class="field"><span>Current balance</span>
+        <span class="amount-input"><b>Rp</b><input name="balance" inputmode="numeric" placeholder="0" data-money value="${esc(balanceText)}"></span>
+      </label>
+      <p class="t-small" style="margin-top:-8px">Type what the ${d.kind === 'ewallet' ? 'e-wallet' : 'bank'} app shows right now. Jon Pocket keeps it up to date as you add transactions.</p>
+      <div class="field"><span>Colour</span><div class="pills" role="group" aria-label="Colour">
+        ${POCKET_COLORS.map((c) => `<button type="button" class="swatch" data-action="pocket-color" data-value="${c}" aria-pressed="${c === d.color}" aria-label="Colour ${c}" style="background:${c}"></button>`).join('')}
+      </div></div>
+      <p class="t-small neg" id="pocket-error" role="alert"></p>
+      <div class="btn-row">
+        ${d.id ? `<button type="button" class="btn danger" data-action="delete-pocket" data-id="${d.id}">Delete</button>` : ''}
+        <button type="submit" class="btn primary">${d.id ? 'Save' : 'Add pocket'}</button>
+      </div>
+    </form>`, savePocket);
+}
+function savePocket() {
+  const f = $('#pocket-form');
+  const name = f.name.value.trim();
+  if (!name) { $('#pocket-error').textContent = 'Give the pocket a name.'; f.name.focus(); return; }
+  const current = parseAmount(f.balance.value) || 0;
+  const d = pocketDraft;
+  if (d.id) {
+    const p = pocketById(d.id);
+    const movement = pocketBalance(d.id) - (p.opening || 0);
+    Object.assign(p, { name, kind: d.kind, color: d.color, opening: Math.round(current - movement), u: stamp() });
+  } else {
+    if (!state.accounts) state.accounts = [];
+    state.accounts.push({ id: uid(), name, kind: d.kind, color: d.color, opening: Math.round(current), u: stamp() });
+  }
+  closeSheet();
+  commit(d.id ? 'Pocket updated' : `${name} added`);
+}
+
 /* ---------- Recurring payments ---------- */
 // One row per payment name (e.g. "Netflix"), using its most recent transaction.
 function latestByName(list) {
@@ -855,6 +1034,7 @@ function dataSheet() {
     <div id="cloud-card">${cloudCard()}</div>
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    <label class="field"><span>Imported transactions go to</span><select class="input" id="import-pocket">${pockets().map((p) => `<option value="${p.id}" ${p.id === (pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket()) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
     <label class="tile-btn" style="cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
     <button type="button" class="tile-btn" data-action="start-empty" ><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
 }
@@ -896,6 +1076,14 @@ function importCsvText(text) {
   const iDate = col('date', 'tanggal'), iType = col('type', 'jenis'), iCat = col('category', 'kategori');
   const iName = col('description', 'keterangan', 'name'), iAmt = col('amount', 'jumlah', 'nominal');
   const iMethod = col('paid with', 'method'), iNote = col('note', 'catatan'), iRec = col('recurring');
+  const iPocket = col('pocket', 'account', 'akun'), iTo = col('to pocket', 'to account');
+  const fallback = pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket();
+  const findPocket = (v) => {
+    const k = String(v || '').trim().toLowerCase();
+    if (!k) return '';
+    const hit = pockets().find((p) => p.id === k || p.name.toLowerCase() === k);
+    return hit ? hit.id : '';
+  };
   if (iDate < 0 || iAmt < 0) throw new Error('The file needs at least "Date" and "Amount" columns.');
   const key = (t) => `${t.date}|${t.type}|${t.amount}|${t.name.toLowerCase()}`;
   const existing = new Set(state.transactions.map(key));
@@ -905,10 +1093,13 @@ function importCsvText(text) {
     const raw = parseFloat(String(r[iAmt] || '').replace(/[^\d.-]/g, ''));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw) { bad++; continue; }
     const typeCell = iType >= 0 ? (r[iType] || '').trim().toLowerCase() : '';
-    const type = typeCell.startsWith('inc') || typeCell === 'cr' || (!typeCell && raw > 0) ? 'income' : 'expense';
-    const cat = catFromLabel(iCat >= 0 ? r[iCat] : '', type);
+    let type = typeCell.startsWith('inc') || typeCell === 'cr' || (!typeCell && raw > 0) ? 'income' : 'expense';
+    const account = findPocket(iPocket >= 0 ? r[iPocket] : '') || fallback;
+    const toAccount = findPocket(iTo >= 0 ? r[iTo] : '');
+    if (typeCell.startsWith('trans') && toAccount && toAccount !== account) type = 'transfer';
+    const cat = type === 'transfer' ? 'transfer' : catFromLabel(iCat >= 0 ? r[iCat] : '', type);
     const t = {
-      id: uid(), type, cat, amount: Math.round(Math.abs(raw)), date,
+      id: uid(), type, cat, amount: Math.round(Math.abs(raw)), date, account, ...(type === 'transfer' ? { toAccount } : {}),
       name: ((iName >= 0 ? r[iName] : '') || '').trim() || CATEGORIES[cat].label,
       method: ((iMethod >= 0 ? r[iMethod] : '') || '').trim() || 'Bank transfer',
       note: ((iNote >= 0 ? r[iNote] : '') || '').trim()
@@ -922,8 +1113,8 @@ function importCsvText(text) {
 }
 
 function exportCsv() {
-  const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note', 'Recurring']];
-  for (const t of sortedTx(state.transactions)) rows.push([t.date, t.type, CATEGORIES[t.cat]?.label || t.cat, t.name, t.type === 'income' ? t.amount : -t.amount, t.method, t.note || '', isRecurring(t) ? 'yes' : '']);
+  const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note', 'Recurring', 'Pocket', 'To pocket']];
+  for (const t of sortedTx(state.transactions)) rows.push([t.date, t.type, CATEGORIES[t.cat]?.label || t.cat, t.name, t.type === 'expense' ? -t.amount : t.amount, t.method, t.note || '', isRecurring(t) ? 'yes' : '', pocketName(pocketOf(t)), t.type === 'transfer' ? pocketName(t.toAccount) : '']);
   const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
@@ -976,6 +1167,24 @@ const ACTIONS = {
   'close-sheet': closeSheet,
   'toggle-hide': () => { state.prefs.hide = !state.prefs.hide; commit(state.prefs.hide ? 'Amounts hidden' : ''); },
   'cat-filter': (el) => { state.prefs.catFilter = el.dataset.value; activitySearch = ''; save(state); location.hash = '#/activity'; },
+  'manage-pockets': managePockets,
+  'open-pocket': (el) => openPocket(el.dataset.id),
+  'add-pocket': () => pocketForm(null),
+  'edit-pocket': (el) => pocketForm(el.dataset.id),
+  'pocket-kind': (el) => { pocketDraft.kind = el.dataset.value; const f = $('#pocket-form'); drawPocketForm(f.balance.value, f.name.value); },
+  'pocket-color': (el) => { pocketDraft.color = el.dataset.value; pressIn(el, 'pocket-color'); },
+  'delete-pocket': (el) => {
+    const id = el.dataset.id;
+    if (pocketHasTx(id)) { $('#pocket-error').textContent = 'This pocket has transactions. Move or delete them first.'; return; }
+    askConfirm(`Delete ${pocketName(id)}?`, 'The pocket will be removed. This cannot be undone.', 'Delete', () => {
+      state.accounts = pockets().filter((p) => p.id !== id);
+      state.deleted[id] = stamp();
+      if (state.prefs.pocketFilter === id) state.prefs.pocketFilter = 'all';
+      closeSheet(); commit('Pocket deleted');
+    });
+  },
+  'pocket-transactions': (el) => { state.prefs.pocketFilter = el.dataset.id; state.prefs.catFilter = 'all'; save(state); closeSheet(); if (location.hash === '#/activity') render(); else location.hash = '#/activity'; },
+  'pocket-filter-here': (el) => { state.prefs.pocketFilter = el.dataset.value; save(state); pressIn(el, 'pocket-filter-here'); $('#tx-list').innerHTML = activityList(); },
   'cat-filter-here': (el) => { state.prefs.catFilter = el.dataset.value; save(state); pressIn(el, 'cat-filter-here'); $('#tx-list').innerHTML = activityList(); },
   'set-period': (el) => { state.prefs.period = el.dataset.value; commit(); },
   'set-stats-tab': (el) => { state.prefs.statsTab = el.dataset.value; commit(); },
@@ -1016,8 +1225,9 @@ const ACTIONS = {
     const t = stamp();
     const deleted = { ...state.deleted };
     for (const x of [...state.transactions, ...state.goals]) deleted[x.id] = t;
-    const { prefs, nameU } = state;
+    const { prefs, nameU, accounts } = state;
     state = emptyState(); state.prefs = prefs; state.nameU = nameU; state.deleted = deleted; state.budgetsU = t;
+    state.accounts = accounts || state.accounts; // keep your pockets
     closeSheet(); commit('All data deleted');
   }),
   'open-auth': () => authSheet('signin'),
@@ -1063,6 +1273,7 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
+  if (el.id === 'import-pocket') { state.prefs.importPocket = el.value; save(state); return; }
   if (el.id === 'import-file' && el.files && el.files[0]) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -1141,6 +1352,7 @@ async function api(path, opts = {}) {
 function applyDoc(doc) {
   state.transactions = doc.transactions || [];
   state.goals = doc.goals || [];
+  state.accounts = doc.accounts || [];
   state.budgets = doc.budgets || {};
   state.budgetsU = doc.budgetsU || 0;
   state.deleted = doc.deleted || {};

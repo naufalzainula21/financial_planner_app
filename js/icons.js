@@ -18,6 +18,8 @@ const P = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
   car: '<path d="M4 16l2-6.5A2 2 0 0 1 7.9 8h8.2a2 2 0 0 1 1.9 1.5L20 16v3H4z"/>',
   gift: '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M12 9v11M4 13h16"/><path d="M12 9c-2-4-6-3-5 0M12 9c2-4 6-3 5 0"/>',
+  bank: '<path d="M3 10l9-6 9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/>',
+  swap: '<path d="M7 4 3 8l4 4"/><path d="M3 8h14"/><path d="M17 20l4-4-4-4"/><path d="M21 16H7"/>',
   repeat: '<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>',
   grid: '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
   piggy: '<path d="M5 11a7 6 0 0 1 12.5-3.5L21 7l-1 4a6 6 0 0 1-2 4v3h-3v-2h-4v2H8v-3a6 6 0 0 1-3-4z"/><path d="M15 10h.01"/><path d="M5 11H3"/>',
@@ -55,6 +57,7 @@ export const CATEGORIES = {
   salary:    { label: 'Salary',           short: 'Salary',    icon: 'income',    tint: '#E3F6EC', ink: '#17834F', color: '#1FAA6B', type: 'income' },
   freelance: { label: 'Freelance',        short: 'Freelance', icon: 'freelance', tint: '#EFEDFE', ink: '#4436D6', color: '#5B4CF0', type: 'income' },
   invest:    { label: 'Investments',      short: 'Invest',    icon: 'invest',    tint: '#E6F0FD', ink: '#1F5FBF', color: '#2F80ED', type: 'income' },
+  transfer:  { label: 'Transfer',         short: 'Transfer',  icon: 'swap',      tint: '#EFEDFE', ink: '#4436D6', color: '#5B4CF0', type: 'transfer' },
   gift:      { label: 'Gifts & other',    short: 'Gifts',     icon: 'gift',      tint: '#FEF4D9', ink: '#8A5A00', color: '#F7B731', type: 'income' }
 };
 

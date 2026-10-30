@@ -6,28 +6,39 @@ export const STORAGE_KEY = KEY;
 
 export const DEFAULT_PREFS = {
   name: '', hide: false, catFilter: 'all', period: 'weekly', statsTab: 'categories',
-  planTab: 'budgets', asset: 'stocks', monthly: 1000000, bannerHiddenOn: ''
+  planTab: 'budgets', asset: 'stocks', monthly: 1000000, bannerHiddenOn: '',
+  pocketFilter: 'all', lastPocket: '', importPocket: ''
 };
+
+/** Starting pockets. Fixed ids so two devices never create duplicates. */
+export const DEFAULT_POCKETS = [
+  { id: 'jago', name: 'Bank Jago', kind: 'bank', color: '#E89A00', opening: 0, u: 0 },
+  { id: 'bca', name: 'BCA', kind: 'bank', color: '#0B5CAB', opening: 0, u: 0 },
+  { id: 'gopay', name: 'GoPay', kind: 'ewallet', color: '#00A6CF', opening: 0, u: 0 },
+  { id: 'ovo', name: 'OVO', kind: 'ewallet', color: '#4C3494', opening: 0, u: 0 }
+];
+const defaultPockets = () => DEFAULT_POCKETS.map((p) => ({ ...p }));
 
 /** A brand-new, empty app: no transactions, budgets or goals. */
 export function emptyState() {
   return {
-    v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], prefs: { ...DEFAULT_PREFS },
+    v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], accounts: defaultPockets(), prefs: { ...DEFAULT_PREFS },
     // sync bookkeeping: when budgets / name last changed, and ids deleted (id -> time)
     budgetsU: 0, nameU: 0, deleted: {}
   };
 }
 
 /** Drop records that are missing what the app needs, so one bad entry can't break a screen. */
-export const validTx = (t) => !!t && typeof t.id === 'string' && (t.type === 'income' || t.type === 'expense')
+export const validTx = (t) => !!t && typeof t.id === 'string' && (t.type === 'income' || t.type === 'expense' || t.type === 'transfer')
   && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && Number(t.amount) > 0;
+export const validAccount = (a) => !!a && typeof a.id === 'string' && typeof a.name === 'string' && a.name.trim() !== '';
 export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name === 'string'
   && Number(g.target) > 0 && typeof g.due === 'string' && /^\d{4}-\d{2}$/.test(g.due);
 
 /** The part of the state that is synced to the cloud. */
 export function toDoc(s) {
   return {
-    transactions: s.transactions, goals: s.goals, budgets: s.budgets, budgetsU: s.budgetsU || 0,
+    transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], budgets: s.budgets, budgetsU: s.budgetsU || 0,
     deleted: s.deleted || {}, openingBalance: s.openingBalance || 0, name: s.prefs?.name || '', nameU: s.nameU || 0
   };
 }
@@ -54,6 +65,7 @@ export function mergeDocs(a, b) {
   return {
     transactions: list(a.transactions, b.transactions).filter(validTx),
     goals: list(a.goals, b.goals).filter(validGoal),
+    accounts: list(a.accounts, b.accounts).filter(validAccount),
     budgets: (aB >= bB ? a.budgets : b.budgets) || {},
     budgetsU: Math.max(aB, bB),
     deleted,
@@ -81,6 +93,7 @@ export function load() {
           ...emptyState(), ...s,
           transactions: Array.isArray(s.transactions) ? s.transactions.filter(validTx) : [],
           goals: Array.isArray(s.goals) ? s.goals.filter(validGoal) : [],
+          accounts: Array.isArray(s.accounts) ? s.accounts.filter(validAccount) : defaultPockets(),
           budgets: s.budgets && typeof s.budgets === 'object' ? s.budgets : {},
           deleted: s.deleted && typeof s.deleted === 'object' ? s.deleted : {},
           prefs: { ...DEFAULT_PREFS, ...s.prefs }

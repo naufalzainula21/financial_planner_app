@@ -171,6 +171,21 @@ svg { display: block; }
 .cat-btn:active .circle { transform: scale(0.94); }
 .cat-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Pockets */
+.content { overflow-x: hidden; }
+.pocket-row { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; margin: 0 -20px; padding: 0 20px; }
+.pocket-row::-webkit-scrollbar { display: none; }
+.pocket-card {
+  flex: 0 0 136px; min-width: 0; text-align: left; border: 1px solid var(--line); background: var(--card);
+  border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--ink);
+}
+.pocket-card b { font-size: 15px; font-weight: 600; }
+.pocket-card.add { border-style: dashed; border-color: #C9C4F7; background: transparent; justify-content: center; }
+.pocket-icon { border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
+.pocket-icon svg { width: 55%; height: 55%; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.swatch { width: 36px; height: 36px; border-radius: 18px; border: 3px solid #fff; outline: 1px solid var(--line-strong); padding: 0; }
+.swatch[aria-pressed="true"] { outline: 2px solid var(--ink); }
+
 /* Category filter grid on Transactions */
 .cat-grid.five { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px 4px; }
 .cat-grid.five .circle { width: 50px; height: 50px; border-radius: 25px; }

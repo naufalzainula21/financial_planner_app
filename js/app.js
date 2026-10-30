@@ -227,6 +227,13 @@ function budgetSlide(b, noBudget, budgetMsg, topBudgets) {
           <div class="between"><span class="t-body" style="font-weight:500">${esc(c.short)}</span><span class="t-small" style="color:${p >= 90 ? 'var(--neg)' : 'var(--muted)'}">${idrShort(sp)} / ${idrShort(limit)}</span></div>
           ${bar(p, p >= 90 ? 'var(--neg)' : c.color, 'thin')}</div></div>`;
       }).join('')}
+      ${(() => {
+        const loose = Object.entries(b.spent).filter(([cat, v]) => v > 0 && !(cat in state.budgets)).sort((x, y) => y[1] - x[1]);
+        if (!loose.length) return '';
+        const sum = loose.reduce((a, [, v]) => a + v, 0);
+        return `<button type="button" class="tile-btn" data-action="add-budget" style="background:var(--bg, #F6F6FB);border:0;padding:10px 12px;min-height:0">
+          <span class="stack" style="gap:2px;min-width:0"><span class="t-small" style="color:var(--ink)"><b>${money(sum, true)}</b> spent without a budget</span><span class="t-small ellipsis">${loose.map(([cat]) => esc(CATEGORIES[cat]?.short || cat)).join(', ')} · tap to add one</span></span>${svg('chev', 'class="chev"')}</button>`;
+      })()}
     </div>`;
 }
 
@@ -292,9 +299,7 @@ function categorySlide() {
   const by = Object.entries(spentByCat(monthTx())).sort((a, z) => z[1] - a[1]);
   const total = by.reduce((a, [, v]) => a + v, 0);
   if (!total) return '<p class="empty" style="padding:28px 0">No spending yet this month.</p>';
-  const top = by.slice(0, 4);
-  const rest = by.slice(4).reduce((a, [, v]) => a + v, 0);
-  const parts = rest ? [...top, ['__rest', rest]] : top;
+  const parts = by; // every category, biggest first
   const R = 46, C = 2 * Math.PI * R;
   let off = 0;
   const arcs = parts.map(([cat, v]) => {
@@ -312,11 +317,14 @@ function categorySlide() {
         <text x="60" y="57" text-anchor="middle" class="donut-label">Total</text>
         <text x="60" y="73" text-anchor="middle" class="donut-value">${state.prefs.hide ? '••••' : idrShort(total).replace('Rp ', '')}</text>
       </svg>
-      <div class="grow stack" style="gap:8px">
-        ${parts.map(([cat, v]) => `<div class="between" style="gap:6px"><span class="row t-small" style="gap:6px;color:var(--ink-2);min-width:0"><i class="key" style="background:${cat === '__rest' ? '#D8D8E4' : (CATEGORIES[cat]?.color || '#A3A3B8')}"></i><span class="ellipsis">${cat === '__rest' ? 'Others' : esc(CATEGORIES[cat]?.short || cat)}</span></span><span class="t-small" style="font-weight:600;color:var(--ink)">${pct(v, total)}%</span></div>`).join('')}
+      <div class="grow stack" style="gap:4px;min-width:0">
+        <span class="t-small">${by.length} categor${by.length === 1 ? 'y' : 'ies'} this month</span>
+        ${biggest ? `<span class="t-small" style="color:var(--ink-2)">Biggest expense: <b>${esc(biggest.name)}</b> · ${money(biggest.amount)}</span>` : ''}
       </div>
     </div>
-    ${biggest ? `<span class="t-small" style="color:var(--ink-2)">Biggest expense: <b>${esc(biggest.name)}</b> · ${money(biggest.amount)}</span>` : ''}`;
+    <div class="stack" style="gap:8px">
+      ${parts.map(([cat, v]) => `<div class="between" style="gap:8px"><span class="row t-small" style="gap:8px;color:var(--ink-2);min-width:0"><i class="key" style="background:${CATEGORIES[cat]?.color || '#A3A3B8'}"></i><span class="ellipsis">${esc(CATEGORIES[cat]?.label || cat)}</span></span><span class="row" style="gap:10px;flex-shrink:0"><span class="t-small">${money(v, true)}</span><span class="t-small" style="font-weight:600;color:var(--ink);min-width:34px;text-align:right">${pct(v, total)}%</span></span></div>`).join('')}
+    </div>`;
 }
 
 function spentSlides(m, b, noBudget, budgetMsg, topBudgets) {
@@ -377,7 +385,7 @@ const PAGES = {
     const budgetMsg = b.p < 75 ? `You're doing great: ${idr(b.left)} left, about ${idrShort(Math.max(0, b.left) / daysLeftInMonth())} a day.`
       : b.p < 100 ? `Heads up: only ${idr(b.left)} left for ${daysLeftInMonth()} days.`
       : `Over budget by ${idr(-b.left)} this month.`;
-    const topBudgets = Object.entries(state.budgets).sort((x, y) => pct(b.spent[y[0]] || 0, y[1]) - pct(b.spent[x[0]] || 0, x[1])).slice(0, 3);
+    const topBudgets = Object.entries(state.budgets).sort((x, y) => pct(b.spent[y[0]] || 0, y[1]) - pct(b.spent[x[0]] || 0, x[1]));
     const isNew = !state.transactions.length;
     const steps = [
       { done: pockets().some((p) => (p.u || 0) > 0), title: 'Set your pocket balances', sub: 'How much is in Jago, BCA, GoPay and OVO now', action: 'manage-pockets' },

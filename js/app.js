@@ -561,7 +561,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet
 
 /* ---------- Transaction sheet ---------- */
 let txDraft = null;
-const METHODS = ['Debit card', 'Credit card', 'E-wallet', 'Bank transfer', 'Cash', 'Recurring', 'Split bill'];
+const METHODS = ['Debit card', 'Credit card', 'E-wallet', 'QRIS', 'Bank transfer', 'Cash', 'Recurring', 'Split bill'];
 
 function txSheet(existing) {
   txDraft = existing ? { ...existing } : { id: null, type: 'expense', cat: 'food', amount: '', name: '', note: '', date: isoDate(now()), method: 'Debit card' };
@@ -741,8 +741,70 @@ function dataSheet() {
     <p class="t-body" style="color:var(--ink-2)">Everything is saved only in this browser on this device. Nothing is sent to a server.</p>
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    <label class="tile-btn" style="box-shadow:none;border:1px solid var(--line);cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
     <button type="button" class="tile-btn" data-action="start-empty" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
 }
+/* ---------- CSV import ---------- */
+function parseCsv(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  text = text.replace(/^﻿/, '');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',' || ch === ';') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some((c) => c.trim() !== '')) rows.push(row);
+      row = [];
+    } else cell += ch;
+  }
+  row.push(cell);
+  if (row.some((c) => c.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+function catFromLabel(label, type) {
+  const l = String(label || '').trim().toLowerCase();
+  const hit = Object.entries(CATEGORIES).find(([id, c]) => c.type === type && (id === l || c.label.toLowerCase() === l || c.short.toLowerCase() === l));
+  return hit ? hit[0] : (type === 'income' ? 'gift' : 'other');
+}
+
+function importCsvText(text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error('The file has no transactions.');
+  const head = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (...names) => head.findIndex((h) => names.includes(h));
+  const iDate = col('date', 'tanggal'), iType = col('type', 'jenis'), iCat = col('category', 'kategori');
+  const iName = col('description', 'keterangan', 'name'), iAmt = col('amount', 'jumlah', 'nominal');
+  const iMethod = col('paid with', 'method'), iNote = col('note', 'catatan');
+  if (iDate < 0 || iAmt < 0) throw new Error('The file needs at least "Date" and "Amount" columns.');
+  const key = (t) => `${t.date}|${t.type}|${t.amount}|${t.name.toLowerCase()}`;
+  const existing = new Set(state.transactions.map(key));
+  let added = 0, skipped = 0, bad = 0;
+  for (const r of rows.slice(1)) {
+    const date = (r[iDate] || '').trim();
+    const raw = parseFloat(String(r[iAmt] || '').replace(/[^\d.-]/g, ''));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw) { bad++; continue; }
+    const typeCell = iType >= 0 ? (r[iType] || '').trim().toLowerCase() : '';
+    const type = typeCell.startsWith('inc') || typeCell === 'cr' || (!typeCell && raw > 0) ? 'income' : 'expense';
+    const cat = catFromLabel(iCat >= 0 ? r[iCat] : '', type);
+    const t = {
+      id: uid(), type, cat, amount: Math.round(Math.abs(raw)), date,
+      name: ((iName >= 0 ? r[iName] : '') || '').trim() || CATEGORIES[cat].label,
+      method: ((iMethod >= 0 ? r[iMethod] : '') || '').trim() || 'Bank transfer',
+      note: ((iNote >= 0 ? r[iNote] : '') || '').trim()
+    };
+    if (existing.has(key(t))) { skipped++; continue; }
+    existing.add(key(t)); state.transactions.push(t); added++;
+  }
+  return { added, skipped, bad };
+}
+
 function exportCsv() {
   const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note']];
   for (const t of sortedTx(state.transactions)) rows.push([t.date, t.type, CATEGORIES[t.cat]?.label || t.cat, t.name, t.type === 'income' ? t.amount : -t.amount, t.method, t.note || '']);
@@ -863,6 +925,22 @@ document.addEventListener('input', (e) => {
     state.prefs.name = el.value.trim();
     save(state);
     if (currentTab === 'home') $('#appbar').innerHTML = appbarHtml({ header: 'welcome' });
+  }
+});
+
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.id === 'import-file' && el.files && el.files[0]) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const r = importCsvText(String(reader.result));
+        closeSheet();
+        commit(`Imported ${r.added} transaction${r.added === 1 ? '' : 's'}${r.skipped ? `, skipped ${r.skipped} already in the app` : ''}${r.bad ? `, ${r.bad} unreadable` : ''}`);
+      } catch (err) { toast(err.message || 'Could not read that file'); }
+    };
+    reader.onerror = () => toast('Could not read that file');
+    reader.readAsText(el.files[0]);
   }
 });
 

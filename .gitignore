@@ -3,3 +3,5 @@ node_modules/
 Thumbs.db
 .vscode/
 .wrangler/
+# personal bank exports
+*.csv

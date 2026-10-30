@@ -18,6 +18,12 @@ const P = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
   car: '<path d="M4 16l2-6.5A2 2 0 0 1 7.9 8h8.2a2 2 0 0 1 1.9 1.5L20 16v3H4z"/>',
   gift: '<rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M12 9v11M4 13h16"/><path d="M12 9c-2-4-6-3-5 0M12 9c2-4 6-3 5 0"/>',
+  coffee: '<path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 11h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3v3M12 3v3"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>',
+  study: '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/>',
+  baby: '<circle cx="12" cy="8" r="4"/><path d="M5 21a7 7 0 0 1 14 0"/><path d="M10.5 8h.01M13.5 8h.01"/>',
+  pet: '<circle cx="6" cy="10" r="1.8"/><circle cx="10" cy="6" r="1.8"/><circle cx="14" cy="6" r="1.8"/><circle cx="18" cy="10" r="1.8"/><path d="M8 17c0-3 2-5 4-5s4 2 4 5c0 2-2 3-4 3s-4-1-4-3z"/>',
+  heartHand: '<path d="M12 13s-5-3-5-6.5A2.5 2.5 0 0 1 12 5a2.5 2.5 0 0 1 5 1.5C17 10 12 13 12 13z"/><path d="M3 17h4l3 2h6l5-3"/>',
   cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9.5v.01M18 14.5v.01"/>',
   bank: '<path d="M3 10l9-6 9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/>',
   swap: '<path d="M7 4 3 8l4 4"/><path d="M3 8h14"/><path d="M17 20l4-4-4-4"/><path d="M21 16H7"/>',
@@ -62,7 +68,23 @@ export const CATEGORIES = {
   gift:      { label: 'Gifts & other',    short: 'Gifts',     icon: 'gift',      tint: '#FEF4D9', ink: '#8A5A00', color: '#F7B731', type: 'income' }
 };
 
-export const catsOf = (type) => Object.entries(CATEGORIES).filter(([, c]) => c.type === type).map(([id]) => id);
+/** Icons and colours offered when you create your own category. */
+export const CATEGORY_ICONS = ['food', 'coffee', 'transport', 'car', 'bills', 'phone', 'home', 'health', 'fun', 'shopping', 'study', 'baby', 'pet', 'plane', 'gift', 'heartHand', 'laptop', 'book', 'income', 'freelance', 'invest', 'wallet', 'cash', 'other'];
+export const CATEGORY_COLORS = ['#5B4CF0', '#2F80ED', '#0E9F9E', '#1FAA6B', '#7C9A2E', '#F29E0C', '#FF8A3D', '#E0457B', '#B4235A', '#64748B'];
+const BUILT_IN = new Set(Object.keys(CATEGORIES));
+export const isCustomCategory = (id) => !BUILT_IN.has(id);
+/** Add the user's own categories (synced in the account) to the list everyone reads from. */
+export function setCustomCategories(list = []) {
+  for (const id of Object.keys(CATEGORIES)) if (!BUILT_IN.has(id)) delete CATEGORIES[id];
+  for (const c of list) {
+    if (!c || !c.id || BUILT_IN.has(c.id) || !c.label) continue;
+    const color = c.color || '#64748B';
+    CATEGORIES[c.id] = { label: c.label, short: c.label.length > 10 ? c.label.slice(0, 10) + '…' : c.label, icon: c.icon || 'other',
+      tint: color + '1F', ink: color, color, type: c.type === 'income' ? 'income' : 'expense', group: c.group === 'needs' ? 'needs' : 'wants', custom: true };
+  }
+}
+
+export const catsOf = (type) => { const ids = Object.entries(CATEGORIES).filter(([, c]) => c.type === type).map(([id]) => id); const last = ids.filter((id) => id === 'other'); return [...ids.filter((id) => id !== 'other'), ...last]; };
 
 export function catTile(catId, small = false) {
   const c = CATEGORIES[catId] || CATEGORIES.other;

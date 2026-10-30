@@ -22,7 +22,7 @@ const defaultPockets = () => DEFAULT_POCKETS.map((p) => ({ ...p }));
 /** A brand-new, empty app: no transactions, budgets or goals. */
 export function emptyState() {
   return {
-    v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], accounts: defaultPockets(), prefs: { ...DEFAULT_PREFS },
+    v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], accounts: defaultPockets(), categories: [], prefs: { ...DEFAULT_PREFS },
     // sync bookkeeping: when budgets / name last changed, and ids deleted (id -> time)
     budgetsU: 0, nameU: 0, deleted: {},
     cycleDay: 25, cycleU: 0 // month runs from this day (payday) to the day before, next month
@@ -32,6 +32,7 @@ export function emptyState() {
 /** Drop records that are missing what the app needs, so one bad entry can't break a screen. */
 export const validTx = (t) => !!t && typeof t.id === 'string' && (t.type === 'income' || t.type === 'expense' || t.type === 'transfer')
   && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && Number(t.amount) > 0;
+export const validCategory = (c) => !!c && typeof c.id === 'string' && typeof c.label === 'string' && c.label.trim() !== '' && (c.type === 'expense' || c.type === 'income');
 export const validAccount = (a) => !!a && typeof a.id === 'string' && typeof a.name === 'string' && a.name.trim() !== '';
 export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name === 'string'
   && Number(g.target) > 0 && typeof g.due === 'string' && /^\d{4}-\d{2}$/.test(g.due);
@@ -39,7 +40,7 @@ export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name
 /** The part of the state that is synced to the cloud. */
 export function toDoc(s) {
   return {
-    transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], budgets: s.budgets, budgetsU: s.budgetsU || 0,
+    transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], categories: s.categories || [], budgets: s.budgets, budgetsU: s.budgetsU || 0,
     deleted: s.deleted || {}, openingBalance: s.openingBalance || 0, name: s.prefs?.name || '', nameU: s.nameU || 0,
     cycleDay: s.cycleDay || 25, cycleU: s.cycleU || 0
   };
@@ -68,6 +69,7 @@ export function mergeDocs(a, b) {
     transactions: list(a.transactions, b.transactions).filter(validTx),
     goals: list(a.goals, b.goals).filter(validGoal),
     accounts: list(a.accounts, b.accounts).filter(validAccount),
+    categories: list(a.categories, b.categories).filter(validCategory),
     budgets: (aB >= bB ? a.budgets : b.budgets) || {},
     budgetsU: Math.max(aB, bB),
     deleted,
@@ -98,6 +100,7 @@ export function load() {
           transactions: Array.isArray(s.transactions) ? s.transactions.filter(validTx) : [],
           goals: Array.isArray(s.goals) ? s.goals.filter(validGoal) : [],
           accounts: Array.isArray(s.accounts) ? s.accounts.filter(validAccount) : defaultPockets(),
+          categories: Array.isArray(s.categories) ? s.categories.filter(validCategory) : [],
           budgets: s.budgets && typeof s.budgets === 'object' ? s.budgets : {},
           deleted: s.deleted && typeof s.deleted === 'object' ? s.deleted : {},
           prefs: { ...DEFAULT_PREFS, ...s.prefs }

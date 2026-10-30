@@ -4,9 +4,10 @@ import {
   idr, idrSigned, idrShort, parseAmount, groupDigits, isoDate, monthKey, monthLabel, shortMonth,
   shortDay, esc, uid
 } from './format.js';
-import { svg, CATEGORIES, catsOf, catTile, goalTile, GOAL_ICONS, GOAL_COLORS } from './icons.js';
+import { svg, CATEGORIES, catsOf, catTile, goalTile, GOAL_ICONS, GOAL_COLORS, CATEGORY_ICONS, CATEGORY_COLORS, isCustomCategory, setCustomCategories } from './icons.js';
 
 let state = load();
+setCustomCategories(state.categories);
 save(state); // first visit: keep the demo data so ids stay stable
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
@@ -360,8 +361,10 @@ function initSlides() {
    ========================================================= */
 const TX_FILTERS = [
   ['all', 'All', 'grid'], ['income', 'Income', 'income'], ['recurring', 'Recurring', 'repeat'], ['food', 'Food', 'food'], ['transport', 'Transport', 'transport'],
-  ['shopping', 'Shopping', 'shopping'], ['bills', 'Bills', 'bills'], ['health', 'Health', 'health'], ['fun', 'Fun', 'fun'], ['other', 'Other', 'other']
+  ['shopping', 'Shopping', 'shopping'], ['bills', 'Bills', 'bills'], ['health', 'Health', 'health'], ['fun', 'Fun', 'fun']
 ];
+// Built-in filters, then your own categories, then Other
+const txFilters = () => [...TX_FILTERS, ...(state.categories || []).filter((c) => CATEGORIES[c.id]).map((c) => [c.id, CATEGORIES[c.id].short, CATEGORIES[c.id].icon]), ['other', 'Other', 'other']];
 const isRecurring = (t) => !!t.recurring || t.method === 'Recurring';
 
 const PAGES = {
@@ -477,10 +480,13 @@ const PAGES = {
       </div>
       ${textTabs([['all', 'All pockets'], ...pockets().map((p) => [p.id, p.name])], 'pocket-filter-here', pocketById(state.prefs.pocketFilter) ? state.prefs.pocketFilter : 'all', 'Filter by pocket')}
       <div class="cat-grid five" role="group" aria-label="Filter by category">
-        ${TX_FILTERS.map(([id, label, icon]) => `
+        ${txFilters().map(([id, label, icon]) => `
           <button type="button" class="cat-btn" data-action="cat-filter-here" data-value="${id}" aria-pressed="${id === f}">
-            <span class="circle">${svg(icon)}</span>${label}
+            <span class="circle">${svg(icon)}</span><span class="ellipsis" style="max-width:100%">${esc(label)}</span>
           </button>`).join('')}
+        <button type="button" class="cat-btn add" data-action="manage-categories">
+          <span class="circle">${svg('plus')}</span>Add
+        </button>
       </div>
       <div class="stack" id="tx-list" style="gap:18px">${activityList()}</div>`
     };
@@ -864,7 +870,8 @@ function drawTxSheet() {
       <label class="field"><span>Date</span><input class="input" type="date" name="date" value="${esc(d.date)}" required></label>` : `
       <div class="field"><span>Category</span>
         <div class="pills" role="group" aria-label="Category">
-          ${cats.map((c) => `<button type="button" class="pill" data-action="tx-cat" data-value="${c}" aria-pressed="${c === d.cat}">${CATEGORIES[c].label}</button>`).join('')}
+          ${cats.map((c) => `<button type="button" class="pill" data-action="tx-cat" data-value="${c}" aria-pressed="${c === d.cat}">${esc(CATEGORIES[c].label)}</button>`).join('')}
+          <button type="button" class="pill pill-add" data-action="new-category-from-tx">+ New category</button>
         </div>
       </div>
       <label class="field"><span>Description</span><input class="input" name="name" maxlength="60" placeholder="${d.type === 'expense' ? 'e.g. Lunch with team' : 'e.g. Monthly salary'}" value="${esc(d.name)}"></label>
@@ -1147,6 +1154,82 @@ function savePocket() {
   commit(d.id ? 'Pocket updated' : `${name} added`);
 }
 
+/* ---------- Categories (your own) ---------- */
+let catDraft = null;
+let catReturnToTx = false;
+
+function manageCategories() {
+  const mine = state.categories || [];
+  const row = (id) => {
+    const c = CATEGORIES[id];
+    const used = state.transactions.filter((t) => t.cat === id).length;
+    return `<div class="tx">${catTile(id)}
+      <div class="meta"><span class="name ellipsis">${esc(c.label)}</span><span class="t-small">${c.type === 'income' ? 'Income' : (c.group === 'needs' ? 'Expense · Need' : 'Expense · Want')} · ${used} transaction${used === 1 ? '' : 's'}</span></div>
+      ${isCustomCategory(id) ? `<button type="button" class="pill" data-action="edit-category" data-id="${id}" style="flex-shrink:0;min-height:36px">Edit</button>` : '<span class="t-small" style="flex-shrink:0">Built-in</span>'}</div>`;
+  };
+  setSheet('Categories', `
+    <button type="button" class="btn primary" data-action="new-category">+ New category</button>
+    <div class="stack" style="gap:8px"><span class="t-label">Your categories</span>
+      ${mine.length ? `<div class="list-card">${mine.filter((c) => CATEGORIES[c.id]).map((c) => row(c.id)).join('')}</div>`
+        : '<p class="empty" style="padding:16px">None yet. Make one for things like Coffee, Pets, Kids or Charity.</p>'}
+    </div>
+    <div class="stack" style="gap:8px"><span class="t-label">Built-in expense categories</span>
+      <div class="list-card">${catsOf('expense').filter((id) => !isCustomCategory(id)).map(row).join('')}</div></div>
+    <div class="stack" style="gap:8px"><span class="t-label">Built-in income categories</span>
+      <div class="list-card">${catsOf('income').filter((id) => !isCustomCategory(id)).map(row).join('')}</div></div>`);
+}
+
+function categoryForm(id, type = 'expense') {
+  const c = id ? (state.categories || []).find((x) => x.id === id) : null;
+  catDraft = c ? { ...c } : { id: null, label: '', type, icon: type === 'income' ? 'income' : 'other', color: CATEGORY_COLORS[(state.categories || []).length % CATEGORY_COLORS.length], group: 'wants' };
+  drawCategoryForm();
+}
+function drawCategoryForm(nameText) {
+  const d = catDraft;
+  const used = d.id ? state.transactions.filter((t) => t.cat === d.id).length : 0;
+  setSheet(d.id ? 'Edit category' : 'New category', `
+    <form id="cat-form" class="stack" style="gap:16px" novalidate>
+      <div class="row" style="gap:12px">
+        <span class="cat" style="background:${d.color}1F;color:${d.color};width:52px;height:52px;border-radius:16px">${svg(d.icon)}</span>
+        <label class="field grow"><span>Name</span><input class="input" name="label" maxlength="24" placeholder="e.g. Coffee, Pets, Charity" value="${esc(nameText ?? d.label)}" required></label>
+      </div>
+      ${d.id ? '' : seg([['expense', 'Expense'], ['income', 'Income']], 'cat-type', d.type)}
+      ${d.type === 'expense' ? `<div class="field"><span>For the 50/30/20 check, this is a</span>${seg([['needs', 'Need'], ['wants', 'Want']], 'cat-group', d.group)}</div>` : ''}
+      <div class="field"><span>Icon</span><div class="icon-grid" role="group" aria-label="Icon">
+        ${CATEGORY_ICONS.map((ic) => `<button type="button" class="icon-choice" data-action="cat-icon" data-value="${ic}" aria-pressed="${ic === d.icon}" aria-label="${ic}">${svg(ic)}</button>`).join('')}
+      </div></div>
+      <div class="field"><span>Colour</span><div class="pills" role="group" aria-label="Colour">
+        ${CATEGORY_COLORS.map((c) => `<button type="button" class="swatch" data-action="cat-color" data-value="${c}" aria-pressed="${c === d.color}" aria-label="Colour ${c}" style="background:${c}"></button>`).join('')}
+      </div></div>
+      <p class="t-small neg" id="cat-error" role="alert"></p>
+      <div class="btn-row">
+        ${d.id ? `<button type="button" class="btn danger" data-action="delete-category" data-id="${d.id}">Delete</button>` : ''}
+        <button type="submit" class="btn primary">${d.id ? 'Save' : 'Add category'}</button>
+      </div>
+      ${d.id && used ? `<p class="t-small">${used} transaction${used === 1 ? ' uses' : 's use'} this category.</p>` : ''}
+    </form>`, saveCategory);
+}
+function saveCategory() {
+  const f = $('#cat-form');
+  const label = f.label.value.trim();
+  if (!label) { $('#cat-error').textContent = 'Give the category a name.'; f.label.focus(); return; }
+  const clash = Object.entries(CATEGORIES).find(([id, c]) => id !== catDraft.id && c.type === catDraft.type && [c.label, c.short].some((n) => (n || '').toLowerCase() === label.toLowerCase()));
+  if (clash) { $('#cat-error').textContent = `There's already a category called ${clash[1].label}.`; return; }
+  if (!state.categories) state.categories = [];
+  const d = catDraft;
+  let id = d.id;
+  if (id) Object.assign(state.categories.find((x) => x.id === id), { label, icon: d.icon, color: d.color, group: d.group, u: stamp() });
+  else { id = 'c_' + uid(); state.categories.push({ id, label, type: d.type, icon: d.icon, color: d.color, group: d.group, u: stamp() }); }
+  setCustomCategories(state.categories);
+  save(state); render(); schedulePush();
+  toast(d.id ? 'Category updated' : `${label} added`);
+  if (catReturnToTx && txDraft) {
+    catReturnToTx = false;
+    if (!d.id && d.type === txDraft.type) txDraft.cat = id;
+    drawTxSheet();
+  } else manageCategories();
+}
+
 /* ---------- Recurring payments ---------- */
 // One row per payment name (e.g. "Netflix"), using its most recent transaction.
 function latestByName(list) {
@@ -1242,6 +1325,7 @@ function dataSheet() {
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     <label class="field"><span>Month starts on (payday)</span><select class="input" id="cycle-day">${Array.from({ length: 28 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === cycleDay() ? 'selected' : ''}>${n === 1 ? '1st (calendar month)' : `${n}${n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : n === 21 ? 'st' : 'th'} of each month`}</option>`).join('')}</select></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    <button type="button" class="tile-btn" data-action="manage-categories"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('grid')}</span><span class="stack" style="gap:0"><span class="t-strong">Categories</span><span class="t-small">Add your own, like Coffee or Pets</span></span></span>${svg('chev', 'class="chev"')}</button>
     <label class="field"><span>Imported transactions go to</span><select class="input" id="import-pocket">${pockets().map((p) => `<option value="${p.id}" ${p.id === (pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket()) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
     <label class="tile-btn" style="cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
     <button type="button" class="tile-btn" data-action="start-empty" ><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
@@ -1381,6 +1465,32 @@ const ACTIONS = {
     document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
     fitSlides(i);
     if (box) box.scrollTo({ left: i * box.clientWidth, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  },
+  'manage-categories': () => { catReturnToTx = false; manageCategories(); },
+  'new-category': () => { catReturnToTx = false; categoryForm(null); },
+  'edit-category': (el) => { catReturnToTx = false; categoryForm(el.dataset.id); },
+  'new-category-from-tx': () => { readTxForm(); catReturnToTx = true; categoryForm(null, txDraft.type === 'income' ? 'income' : 'expense'); },
+  'cat-type': (el) => { catDraft.type = el.dataset.value; catDraft.icon = catDraft.type === 'income' ? 'income' : (catDraft.icon === 'income' ? 'other' : catDraft.icon); drawCategoryForm($('#cat-form').label.value); },
+  'cat-group': (el) => { catDraft.group = el.dataset.value; pressIn(el, 'cat-group'); },
+  'cat-icon': (el) => { catDraft.icon = el.dataset.value; drawCategoryForm($('#cat-form').label.value); },
+  'cat-color': (el) => { catDraft.color = el.dataset.value; drawCategoryForm($('#cat-form').label.value); },
+  'delete-category': (el) => {
+    const id = el.dataset.id;
+    const c = CATEGORIES[id];
+    const used = state.transactions.filter((t) => t.cat === id);
+    const fallback = c.type === 'income' ? 'gift' : 'other';
+    askConfirm(`Delete ${c.label}?`, used.length ? `${used.length} transaction${used.length === 1 ? '' : 's'} will move to ${CATEGORIES[fallback].label}.` : 'This category will be removed.', 'Delete', () => {
+      const t0 = stamp();
+      for (const t of used) { t.cat = fallback; t.u = t0; }
+      if (state.budgets[id] !== undefined) { delete state.budgets[id]; state.budgetsU = t0; }
+      state.categories = state.categories.filter((x) => x.id !== id);
+      state.deleted[id] = t0;
+      if (state.prefs.catFilter === id) state.prefs.catFilter = 'all';
+      setCustomCategories(state.categories);
+      save(state); render(); schedulePush();
+      toast('Category deleted');
+      manageCategories();
+    });
   },
   'manage-pockets': managePockets,
   'open-pocket': (el) => openPocket(el.dataset.id),
@@ -1606,6 +1716,8 @@ function applyDoc(doc) {
   state.transactions = doc.transactions || [];
   state.goals = doc.goals || [];
   state.accounts = doc.accounts || [];
+  state.categories = doc.categories || [];
+  setCustomCategories(state.categories);
   state.cycleDay = doc.cycleDay || 25;
   state.cycleU = doc.cycleU || 0;
   state.budgets = doc.budgets || {};

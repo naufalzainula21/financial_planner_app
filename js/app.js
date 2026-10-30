@@ -577,6 +577,37 @@ const PAGES = {
   }
 };
 
+// Compares what you've planned to spend (all budgets) with what came in this month
+function budgetVsIncome(b) {
+  const m = totals(monthTx());
+  const income = m.income, allocated = b.total, spent = m.expense;
+  const top = Math.max(income, allocated, spent, 1);
+  const row = (label, value, color, note = '') => `
+    <div class="stack" style="gap:6px">
+      <div class="between"><span class="t-small" style="color:var(--ink-2)">${label}</span><b style="font-size:14px">${money(value)}</b></div>
+      ${bar(value / top * 100, color)}
+      ${note ? `<span class="t-small">${note}</span>` : ''}
+    </div>`;
+  const gap = income - allocated;
+  const share = income ? Math.round(allocated / income * 100) : 0;
+  let verdict;
+  if (!income && !allocated) verdict = 'Add your income and budgets to see how they compare.';
+  else if (!income) verdict = `No income recorded since ${fmtDM(currentCycle().start)} yet.`;
+  else if (gap >= 0) verdict = `<b class="pos">${money(gap)}</b> of your income isn't budgeted yet — room for savings or goals.`;
+  else verdict = `Budgets are <b class="neg">${money(-gap)}</b> more than your income this month.`;
+  return `
+    <section class="card stack" style="gap:14px" aria-label="Budget vs income">
+      <div class="between">
+        <div class="stack" style="gap:0"><h2 style="font-size:16px">Budget vs income</h2><span class="t-small">${cycleLabel()}</span></div>
+        ${income ? `<span class="pill" style="pointer-events:none;min-height:30px;padding:4px 12px;font-weight:600;${share > 100 ? 'color:var(--neg)' : ''}">${share}% budgeted</span>` : ''}
+      </div>
+      ${row('Income this month', income, 'var(--pos)')}
+      ${row('Total budget allocated', allocated, 'var(--primary)', `${Object.keys(state.budgets).length} categor${Object.keys(state.budgets).length === 1 ? 'y' : 'ies'}`)}
+      ${row('Spent so far', spent, spent > income && income ? 'var(--neg)' : '#F29E0C', b.total ? `${money(b.used)} of it in budgeted categories` : '')}
+      <p class="t-small" style="color:var(--ink-2);border-top:1px solid var(--line);padding-top:12px">${verdict}</p>
+    </section>`;
+}
+
 function planBudgets() {
   const b = budgetSummary();
   const perDay = Math.max(0, b.left) / daysLeftInMonth();
@@ -593,6 +624,8 @@ function planBudgets() {
       </div>
       <div class="glass"><span class="t-small">Daily allowance until ${fmtDM(currentCycle().end)}</span><b style="font-size:16px">${money(perDay)}/day</b></div>
     </section>
+
+    ${budgetVsIncome(b)}
 
     <button type="button" class="tile-btn" data-action="payments">
       <span class="row" style="gap:12px">${catTile('bills')}<span class="stack" style="gap:0"><span class="t-strong">Recurring payments</span><span class="t-small">${recurring ? `${recurring} marked` : 'Mark rent, bills and subscriptions'}</span></span></span>

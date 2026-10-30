@@ -57,7 +57,13 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS login_attempts (
      email TEXT NOT NULL,
      ts INTEGER NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS login_attempts_email ON login_attempts(email, ts)`
+  `CREATE INDEX IF NOT EXISTS login_attempts_email ON login_attempts(email, ts)`,
+  // One private key per account for iPhone Shortcuts (only the hash is stored)
+  `CREATE TABLE IF NOT EXISTS shortcut_keys (
+     user_id INTEGER PRIMARY KEY,
+     key_hash TEXT NOT NULL UNIQUE,
+     created_at INTEGER NOT NULL,
+     last_used INTEGER)`
 ];
 let schemaReady = false;
 export async function ensureSchema(db) {
@@ -97,4 +103,15 @@ export const validEmail = (e) => e.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export async function readJson(request) {
   try { return await request.json(); } catch { return null; }
+}
+
+/** Finds the account for a Shortcut key sent as "Authorization: Bearer <key>". */
+export async function userFromShortcutKey(request, db) {
+  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') || '');
+  const key = m ? m[1] : new URL(request.url).searchParams.get('key');
+  if (!key || key.length < 20 || key.length > 100) return null;
+  const row = await db.prepare('SELECT user_id FROM shortcut_keys WHERE key_hash = ?').bind(await sha256(key)).first();
+  if (!row) return null;
+  await db.prepare('UPDATE shortcut_keys SET last_used = ? WHERE user_id = ?').bind(Date.now(), row.user_id).run();
+  return row.user_id;
 }

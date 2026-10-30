@@ -209,6 +209,10 @@ svg { display: block; }
 .cat-btn[aria-pressed="true"] { color: var(--primary); font-weight: 600; }
 .cat-btn[aria-pressed="true"] .circle { background: var(--primary); border-color: var(--primary); color: #fff; }
 
+/* Shortcut setup steps */
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+.steps b { color: var(--ink); font-weight: 600; }
+
 /* Custom categories */
 .cat-btn.add .circle { border-style: dashed; border-color: #C9C4F7; background: transparent; }
 .cat-btn.add { color: var(--primary); }

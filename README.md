@@ -120,3 +120,17 @@ Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categorie
 - **Bank email sync:** forward bank emails to a Cloudflare Email Worker that adds transactions to your account.
 - **Live stock & crypto prices:** call a quotes API from a Pages Function so your API key stays secret.
 - **Bigger app:** move to Vite + React or SvelteKit once screens multiply; Cloudflare Pages supports both.
+
+## iPhone Shortcut (add transactions without opening the app)
+In the app: tap your avatar → **iPhone Shortcut** → **Create Shortcut key**. The steps are shown there.
+
+The Shortcut calls:
+
+```
+POST /api/quick-add
+Authorization: Bearer <your key>
+Content-Type: application/json
+{ "type": "expense", "amount": 35000, "name": "Kopi", "category": "Food", "pocket": "GoPay" }
+```
+
+Only `amount` is required (`type` defaults to expense, `pocket` to BCA, `category` to Other). `amount` can also be `"35.000"`, `"35k"` or `"2jt"`. `GET /api/quick-add` with the same header returns your category and pocket names. Keys are stored hashed; making a new key or tapping **Turn off** disables the old one.

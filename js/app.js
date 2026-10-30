@@ -1358,11 +1358,57 @@ function dataSheet() {
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     <label class="field"><span>Month starts on (payday)</span><select class="input" id="cycle-day">${Array.from({ length: 28 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === cycleDay() ? 'selected' : ''}>${n === 1 ? '1st (calendar month)' : `${n}${n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : n === 21 ? 'st' : 'th'} of each month`}</option>`).join('')}</select></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
+    ${cloud.email && !window.RENCANA_PREVIEW ? `<button type="button" class="tile-btn" data-action="shortcut-setup"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('phone')}</span><span class="stack" style="gap:0"><span class="t-strong">iPhone Shortcut</span><span class="t-small">Add income or expenses from Shortcuts or Siri</span></span></span>${svg('chev', 'class="chev"')}</button>` : ''}
     <button type="button" class="tile-btn" data-action="manage-categories"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('grid')}</span><span class="stack" style="gap:0"><span class="t-strong">Categories</span><span class="t-small">Add your own, like Coffee or Pets</span></span></span>${svg('chev', 'class="chev"')}</button>
     <label class="field"><span>Imported transactions go to</span><select class="input" id="import-pocket">${pockets().map((p) => `<option value="${p.id}" ${p.id === (pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket()) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
     <label class="tile-btn" style="cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
     <button type="button" class="tile-btn" data-action="start-empty" ><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
 }
+/* ---------- iPhone Shortcut ---------- */
+let shortcutKey = null; // shown once, right after it's made
+const shortcutUrl = () => `${location.origin}/api/quick-add`;
+
+async function shortcutSheet() {
+  setSheet('iPhone Shortcut', '<p class="t-body" style="color:var(--ink-2)">Loading…</p>');
+  const r = await api('shortcut-key').catch(() => null);
+  if (!r || !r.ok) { setSheet('iPhone Shortcut', '<p class="t-body" style="color:var(--ink-2)">Couldn’t reach the cloud. Check your connection and try again.</p>'); return; }
+  drawShortcutSheet(r.data);
+}
+
+function drawShortcutSheet(info) {
+  const copyRow = (label, value, id) => `
+    <div class="field"><span>${label}</span>
+      <div class="row" style="gap:8px"><input class="input grow" id="${id}" readonly value="${esc(value)}" style="font-size:13px;font-family:ui-monospace,Menlo,monospace">
+      <button type="button" class="pill" data-action="copy-field" data-value="${id}" style="flex-shrink:0;min-height:44px">Copy</button></div></div>`;
+  const when = (t) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const keyPart = shortcutKey
+    ? `${copyRow('Your Shortcut key (shown only now — copy it into the Shortcut)', shortcutKey, 'sc-key')}`
+    : info.exists
+      ? `<div class="stack" style="gap:4px;background:var(--primary-50);border-radius:16px;padding:14px 16px"><span class="t-strong">Shortcut key is on</span><span class="t-small">Made ${when(info.createdAt)}${info.lastUsed ? ` · last used ${when(info.lastUsed)}` : ' · not used yet'}. Lost it? Make a new one — the old one stops working.</span></div>`
+      : '';
+  setSheet('iPhone Shortcut', `
+    <p class="t-body" style="color:var(--ink-2)">Add an expense or income from the Shortcuts app, your Home Screen, the Action Button or by asking Siri — without opening Jon Pocket. It shows up here the next time the app syncs.</p>
+    ${keyPart}
+    ${copyRow('Web address (URL)', shortcutUrl(), 'sc-url')}
+    <div class="btn-row">
+      ${info.exists || shortcutKey ? '<button type="button" class="btn danger" data-action="shortcut-off">Turn off</button>' : ''}
+      <button type="button" class="btn primary" data-action="shortcut-new">${info.exists || shortcutKey ? 'Make a new key' : 'Create Shortcut key'}</button>
+    </div>
+    <div class="stack" style="gap:8px"><span class="t-label">Build the Shortcut (about 2 minutes)</span>
+      <ol class="steps">
+        <li>Open <b>Shortcuts</b> → <b>+</b>. Name it “Add expense”.</li>
+        <li>Add <b>Ask for Input</b> → Number, prompt “How much?”.</li>
+        <li>Add <b>Ask for Input</b> → Text, prompt “What for?”.</li>
+        <li>Optional: add <b>Choose from Menu</b> with your categories (e.g. Food, Transport, Shopping) and pockets (e.g. GoPay, BCA). Use the names you see in the app.</li>
+        <li>Add <b>Get Contents of URL</b>. Paste the web address above. Tap <b>Show More</b>: Method <b>POST</b>.</li>
+        <li>Headers: add <b>Authorization</b> with the value <b>Bearer</b> + a space + your key.</li>
+        <li>Request Body <b>JSON</b>, add fields: <b>type</b> = expense, <b>amount</b> = Provided Input (number), <b>name</b> = Provided Input (text), and optionally <b>category</b>, <b>pocket</b>.</li>
+        <li>Add <b>Get Dictionary Value</b> “message” → <b>Show Notification</b>. Done!</li>
+      </ol>
+      <p class="t-small">For income, duplicate the Shortcut and set <b>type</b> = income (category e.g. Salary). Leave out pocket to use BCA, and leave out category to use Other. You can say “Hey Siri, Add expense”.</p>
+    </div>`);
+}
+
 /* ---------- CSV import ---------- */
 function parseCsv(text) {
   const rows = []; let row = [], cell = '', q = false;
@@ -1498,6 +1544,26 @@ const ACTIONS = {
     document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
     fitSlides(i);
     if (box) box.scrollTo({ left: i * box.clientWidth, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  },
+  'shortcut-setup': () => { shortcutKey = null; shortcutSheet(); },
+  'shortcut-new': async () => {
+    const r = await api('shortcut-key', { method: 'POST', body: {} }).catch(() => null);
+    if (!r || !r.ok) { toast('Couldn’t make a key. Try again.'); return; }
+    shortcutKey = r.data.key;
+    drawShortcutSheet({ exists: true, createdAt: r.data.createdAt, lastUsed: 0 });
+    toast('Shortcut key created');
+  },
+  'shortcut-off': () => askConfirm('Turn off the Shortcut?', 'Shortcuts using the current key will stop working.', 'Turn off', async () => {
+    const r = await api('shortcut-key', { method: 'DELETE', body: {} }).catch(() => null);
+    if (!r || !r.ok) { toast('Couldn’t turn it off. Try again.'); return; }
+    shortcutKey = null;
+    drawShortcutSheet({ exists: false });
+    toast('Shortcut turned off');
+  }),
+  'copy-field': async (el) => {
+    const input = $('#' + el.dataset.value);
+    try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
+    toast('Copied');
   },
   'manage-categories': () => { catReturnToTx = false; manageCategories(); },
   'new-category': () => { catReturnToTx = false; categoryForm(null); },

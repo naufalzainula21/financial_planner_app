@@ -77,7 +77,11 @@ const balance = () => (state.openingBalance || 0) + pockets().reduce((s, p) => s
 const POCKET_KINDS = { bank: { label: 'Bank', long: 'Bank account', icon: 'bank' }, ewallet: { label: 'E-wallet', long: 'E-wallet', icon: 'wallet' }, cash: { label: 'Cash', long: 'Cash', icon: 'cash' } };
 const kindOf = (p) => POCKET_KINDS[p?.kind] || POCKET_KINDS.bank;
 const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(kindOf(p).icon)}</span>`;
-const goalsSaved = () => state.goals.reduce((s, g) => s + g.saved, 0);
+// A goal can follow its pocket's balance, or keep its own saved amount
+const goalTracksPocket = (g) => g.track === 'pocket' && !!pocketById(g.pocket);
+const goalSaved = (g) => (goalTracksPocket(g) ? Math.max(0, pocketBalance(g.pocket)) : (g.saved || 0));
+const goalsSaved = () => state.goals.reduce((s, g) => s + goalSaved(g), 0);
+const goalPocketLine = (g) => (pocketById(g.pocket) ? `${goalTracksPocket(g) ? 'Follows' : 'In'} ${esc(pocketName(g.pocket))}` : '');
 
 function spentByCat(list) {
   const m = {};
@@ -301,13 +305,13 @@ const PAGES = {
       <section class="card lg stack" aria-label="Goals" style="gap:12px">
         <div class="between"><span class="t-h3">Goals</span><a class="see-all" href="#/plan/goals">${state.goals.length ? 'See all' : ''}</a></div>
         ${state.goals.length ? state.goals.slice(0, 3).map((g) => {
-          const p = pct(g.saved, g.target);
+          const p = pct(goalSaved(g), g.target);
           return `<button type="button" class="row" data-action="edit-goal" data-id="${g.id}" style="gap:10px;border:0;background:none;padding:0;text-align:left;width:100%;color:var(--ink)">
             ${goalTile(g.icon, g.color)}
             <span class="grow stack" style="gap:5px">
               <span class="between"><span class="t-body ellipsis" style="font-weight:500">${esc(g.name)}</span><span class="t-small">${p}%</span></span>
               ${bar(p, g.color, 'thin')}
-              <span class="t-small">${money(g.saved, true)} of ${idrShort(g.target)}</span>
+              <span class="t-small">${money(goalSaved(g), true)} of ${idrShort(g.target)}${pocketById(g.pocket) ? ` · ${goalPocketLine(g)}` : ''}</span>
             </span>
           </button>`;
         }).join('') : `
@@ -492,18 +496,20 @@ function planGoals() {
 
     <div class="list-card">
       ${state.goals.length ? state.goals.map((g) => {
-        const p = pct(g.saved, g.target);
-        const per = Math.ceil(Math.max(0, g.target - g.saved) / monthsUntil(g.due) / 10000) * 10000;
+        const saved = goalSaved(g);
+        const p = pct(saved, g.target);
+        const per = Math.ceil(Math.max(0, g.target - saved) / monthsUntil(g.due) / 10000) * 10000;
         const due = shortMonth(new Date(g.due + '-01T00:00:00'));
         return `
         <div class="tx" style="align-items:flex-start">
           ${goalTile(g.icon, g.color)}
           <div class="meta" style="gap:6px">
-            <div class="between"><span class="name ellipsis">${esc(g.name)}</span><b style="font-size:14px">${money(g.saved, true)}</b></div>
+            <div class="between"><span class="name ellipsis">${esc(g.name)}</span><b style="font-size:14px">${money(saved, true)}</b></div>
             ${g.members?.length ? `<span class="row" style="gap:6px"><span class="avatars">${g.members.map((mb) => `<span style="background:${mb.bg}">${esc(mb.i)}</span>`).join('')}</span><span class="t-small">${g.members.length} members · by ${due}</span></span>`
               : `<span class="t-small">By ${due} · of ${idrShort(g.target)}</span>`}
+            ${pocketById(g.pocket) ? `<span class="row" style="gap:6px">${pocketIcon(pocketById(g.pocket), 20)}<span class="t-small">${goalPocketLine(g)}</span></span>` : ''}
             ${bar(p, g.color)}
-            <div class="between"><button type="button" class="view" data-action="edit-goal" data-id="${g.id}">Add money</button><span class="t-small">${p >= 100 ? 'Goal reached' : `Save ${idrShort(per)}/mo · ${p}%`}</span></div>
+            <div class="between"><button type="button" class="view" data-action="edit-goal" data-id="${g.id}">${goalTracksPocket(g) ? 'Open' : 'Add money'}</button><span class="t-small">${p >= 100 ? 'Goal reached' : `Save ${idrShort(per)}/mo · ${p}%`}</span></div>
           </div>
         </div>`;
       }).join('') : '<p class="empty">No goals yet.</p>'}
@@ -596,7 +602,7 @@ function notifications() {
   }
   for (const g of state.goals) {
     const m = monthsUntil(g.due);
-    if (g.saved < g.target && m <= 3) out.push({ goal: g, text: `${g.name}: ${idr(g.target - g.saved)} to go, due in ${m} month${m === 1 ? '' : 's'}.` });
+    if (goalSaved(g) < g.target && m <= 3) out.push({ goal: g, text: `${g.name}: ${idr(g.target - goalSaved(g))} to go, due in ${m} month${m === 1 ? '' : 's'}.` });
   }
   return out;
 }
@@ -804,34 +810,66 @@ function budgetSheet(cat) {
 let goalMode = 'add';
 let newGoalIcon = 'goal';
 
+function pocketOptions(selected, { none = 'Not linked', exclude = '' } = {}) {
+  return `${none !== null ? `<option value="">${esc(none)}</option>` : ''}${pockets().filter((p) => p.id !== exclude).map((p) => `<option value="${p.id}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}`;
+}
+
 function goalSheet(id) {
   const g = state.goals.find((x) => x.id === id);
   if (!g) return newGoalSheet();
-  const left = Math.max(0, g.target - g.saved);
-  openSheet(g.name, `
+  const saved = goalSaved(g);
+  const left = Math.max(0, g.target - saved);
+  const tracks = goalTracksPocket(g);
+  const gp = pocketById(g.pocket);
+  const body = `
     <form id="goal-form" class="stack" style="gap:16px" novalidate>
       <div class="stack" style="gap:8px;background:var(--primary-50);border-radius:16px;padding:16px">
-        <div class="between"><span class="t-label">Saved</span><span class="t-strong">${idr(g.saved)} of ${idr(g.target)}</span></div>
-        ${bar(pct(g.saved, g.target), g.color)}
-        <span class="t-small">${left ? `${idr(left)} to go` : 'Goal reached!'}</span>
+        <div class="between"><span class="t-label">Saved</span><span class="t-strong">${idr(saved)} of ${idr(g.target)}</span></div>
+        ${bar(pct(saved, g.target), g.color)}
+        <span class="t-small">${left ? `${idr(left)} to go` : 'Goal reached!'}${tracks ? ` · follows the ${esc(gp.name)} balance` : ''}</span>
       </div>
-      ${seg([['add', 'Add money'], ['withdraw', 'Take out']], 'goal-mode', goalMode)}
-      <label class="field"><span>Amount</span>
-        <span class="amount-input"><b>Rp</b><input name="amount" inputmode="numeric" placeholder="0" data-money></span>
-      </label>
-      <div class="pills">${[500000, 1000000, 2000000].map((v) => `<button type="button" class="pill" data-action="quick-amount" data-value="${v}">+${idrShort(v)}</button>`).join('')}</div>
-      <p class="t-small neg" id="goal-error" role="alert"></p>
-      <div class="btn-row">
-        <button type="button" class="btn danger" data-action="delete-goal" data-id="${g.id}">Delete</button>
-        <button type="submit" class="btn primary">Update goal</button>
+
+      <div class="stack" style="gap:10px">
+        <label class="field"><span>Saved in pocket</span><select class="input" id="goal-pocket">${pocketOptions(g.pocket)}</select></label>
+        ${gp ? `<label class="check-row"><input type="checkbox" id="goal-track" ${tracks ? 'checked' : ''}>
+          <span class="stack" style="gap:0"><span class="t-strong">Use ${esc(gp.name)}'s balance as the saved amount</span><span class="t-small">Best when this pocket holds only this goal</span></span></label>` : ''}
       </div>
-    </form>`, () => {
-    const amt = parseAmount($('#goal-form').amount.value);
+
+      ${tracks ? `
+        <p class="t-body" style="color:var(--ink-2)">To add money, move it into ${esc(gp.name)} with a transfer. The goal updates by itself.</p>
+        <button type="button" class="btn primary" data-action="goal-transfer" data-id="${g.id}">Move money into ${esc(gp.name)}</button>
+        <button type="button" class="btn danger" data-action="delete-goal" data-id="${g.id}">Delete goal</button>` : `
+        ${seg([['add', 'Add money'], ['withdraw', 'Take out']], 'goal-mode', goalMode)}
+        <label class="field"><span>Amount</span>
+          <span class="amount-input"><b>Rp</b><input name="amount" inputmode="numeric" placeholder="0" data-money></span>
+        </label>
+        <div class="pills">${[500000, 1000000, 2000000].map((v) => `<button type="button" class="pill" data-action="quick-amount" data-value="${v}">+${idrShort(v)}</button>`).join('')}</div>
+        ${gp ? `<label class="field"><span id="goal-move-label">${goalMode === 'add' ? `Move it into ${esc(gp.name)} from` : `Move it from ${esc(gp.name)} to`}</span>
+          <select class="input" name="movePocket">${pocketOptions('', { none: 'Don’t record a transfer', exclude: gp.id })}</select></label>
+          <p class="t-small" style="margin-top:-8px">Choosing a pocket also records a transfer, so both pocket balances stay right.</p>` : ''}
+        <p class="t-small neg" id="goal-error" role="alert"></p>
+        <div class="btn-row">
+          <button type="button" class="btn danger" data-action="delete-goal" data-id="${g.id}">Delete</button>
+          <button type="submit" class="btn primary">Update goal</button>
+        </div>`}
+    </form>`;
+  setSheet(g.name, body, tracks ? null : () => {
+    const f = $('#goal-form');
+    const amt = parseAmount(f.amount.value);
     if (!amt || amt <= 0) { $('#goal-error').textContent = 'Enter an amount above zero.'; return; }
-    g.saved = Math.max(0, g.saved + (goalMode === 'add' ? amt : -amt));
+    const adding = goalMode === 'add';
+    g.saved = Math.max(0, (g.saved || 0) + (adding ? amt : -amt));
     g.u = stamp();
+    const other = f.movePocket ? f.movePocket.value : '';
+    if (gp && other && pocketById(other)) {
+      state.transactions.push({
+        id: uid(), type: 'transfer', cat: 'transfer', amount: Math.round(amt),
+        account: adding ? other : gp.id, toAccount: adding ? gp.id : other,
+        name: adding ? `Saving for ${g.name}` : `From ${g.name} savings`, note: '', date: isoDate(now()), method: 'Transfer', u: stamp()
+      });
+    }
     closeSheet();
-    commit(goalMode === 'add' ? `Added ${idr(amt)} to ${g.name}` : `Took ${idr(amt)} from ${g.name}`);
+    commit(adding ? `Added ${idr(amt)} to ${g.name}` : `Took ${idr(amt)} from ${g.name}`);
   });
 }
 
@@ -845,8 +883,11 @@ function newGoalSheet() {
         ${GOAL_ICONS.map((ic) => `<button type="button" class="pill" data-action="goal-icon" data-value="${ic}" aria-pressed="${ic === newGoalIcon}" aria-label="${ic}" style="padding:0 12px">${svg(ic, 'style="width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round"')}</button>`).join('')}
       </div></div>
       <label class="field"><span>Target amount</span><span class="amount-input"><b>Rp</b><input name="target" inputmode="numeric" placeholder="0" data-money></span></label>
+      <label class="field"><span>Saved in pocket</span><select class="input" name="pocket" id="newgoal-pocket">${pocketOptions('')}</select></label>
+      <label class="check-row" id="newgoal-track-row" hidden><input type="checkbox" name="track">
+        <span class="stack" style="gap:0"><span class="t-strong">Use this pocket's balance as the saved amount</span><span class="t-small">Best when the pocket holds only this goal</span></span></label>
       <div class="grid-2">
-        <label class="field"><span>Already saved</span><input class="input" name="saved" inputmode="numeric" placeholder="0" data-money></label>
+        <label class="field" id="newgoal-saved-field"><span>Already saved</span><input class="input" name="saved" inputmode="numeric" placeholder="0" data-money></label>
         <label class="field"><span>Target month</span><input class="input" type="month" name="due" value="${def}"></label>
       </div>
       <p class="t-small neg" id="newgoal-error" role="alert"></p>
@@ -858,7 +899,9 @@ function newGoalSheet() {
     const saved = parseAmount(f.saved.value) || 0;
     if (!name) { $('#newgoal-error').textContent = 'Give your goal a name.'; f.name.focus(); return; }
     if (!target || target <= 0) { $('#newgoal-error').textContent = 'Enter a target above zero.'; return; }
-    state.goals.push({ id: uid(), name, icon: newGoalIcon, color: GOAL_COLORS[state.goals.length % GOAL_COLORS.length], saved: Math.round(saved), target: Math.round(target), due: f.due.value || def, members: [], u: stamp() });
+    const pocket = pocketById(f.pocket.value) ? f.pocket.value : '';
+    const track = pocket && f.track.checked ? 'pocket' : 'manual';
+    state.goals.push({ id: uid(), name, icon: newGoalIcon, color: GOAL_COLORS[state.goals.length % GOAL_COLORS.length], saved: track === 'pocket' ? 0 : Math.round(saved), target: Math.round(target), due: f.due.value || def, members: [], pocket, track, u: stamp() });
     closeSheet();
     commit('Goal created');
   });
@@ -913,6 +956,10 @@ function openPocket(id) {
       <button type="button" class="btn" style="min-height:46px;background:var(--chip);color:var(--ink)" data-action="edit-pocket" data-id="${id}">Edit pocket</button>
       <button type="button" class="btn" style="min-height:46px;background:var(--primary-50);color:var(--primary)" data-action="pocket-transactions" data-id="${id}">All transactions</button>
     </div>
+    ${state.goals.some((g) => g.pocket === id) ? `
+    <div class="stack" style="gap:8px"><span class="t-label">Goals saved here</span>
+      ${state.goals.filter((g) => g.pocket === id).map((g) => `<button type="button" class="row" data-action="edit-goal" data-id="${g.id}" style="gap:10px;border:0;background:none;padding:0;text-align:left;width:100%;color:var(--ink)">${goalTile(g.icon, g.color)}<span class="grow stack" style="gap:4px"><span class="between"><span class="t-body" style="font-weight:500">${esc(g.name)}</span><span class="t-small">${pct(goalSaved(g), g.target)}%</span></span>${bar(pct(goalSaved(g), g.target), g.color, 'thin')}</span></button>`).join('')}
+    </div>` : ''}
     <div class="section-head" style="margin:0"><h2 style="font-size:15px">Recent</h2></div>
     ${list.length ? txList(list.slice(0, 6)) : '<p class="empty">No transactions in this pocket yet.</p>'}`);
 }
@@ -1201,6 +1248,7 @@ const ACTIONS = {
     askConfirm(`Delete ${pocketName(id)}?`, 'The pocket will be removed. This cannot be undone.', 'Delete', () => {
       state.accounts = pockets().filter((p) => p.id !== id);
       state.deleted[id] = stamp();
+      for (const g of state.goals) if (g.pocket === id) { if (g.track === 'pocket') g.saved = 0; g.pocket = ''; g.track = 'manual'; g.u = stamp(); }
       if (state.prefs.pocketFilter === id) state.prefs.pocketFilter = 'all';
       closeSheet(); commit('Pocket deleted');
     });
@@ -1219,7 +1267,20 @@ const ACTIONS = {
   'delete-budget': (el) => { delete state.budgets[el.dataset.id]; state.budgetsU = stamp(); closeSheet(); commit('Budget removed'); },
   'add-goal': () => { newGoalIcon = 'goal'; newGoalSheet(); },
   'edit-goal': (el) => { goalMode = 'add'; goalSheet(el.dataset.id); },
-  'goal-mode': (el) => { goalMode = el.dataset.value; pressIn(el, 'goal-mode'); },
+  'goal-mode': (el) => {
+    goalMode = el.dataset.value; pressIn(el, 'goal-mode');
+    const lbl = $('#goal-move-label'); const sel = $('#goal-pocket');
+    if (lbl && sel) { const n = pocketName(sel.value); lbl.textContent = goalMode === 'add' ? `Move it into ${n} from` : `Move it from ${n} to`; }
+  },
+  'goal-transfer': (el) => {
+    const g = state.goals.find((x) => x.id === el.dataset.id);
+    if (!g) return;
+    closeSheet(); txSheet();
+    txDraft.type = 'transfer'; txDraft.toAccount = g.pocket;
+    txDraft.account = (pockets().find((p) => p.id !== g.pocket && p.id === newTxPocket()) || pockets().find((p) => p.id !== g.pocket) || {}).id || '';
+    txDraft.name = `Saving for ${g.name}`;
+    drawTxSheet();
+  },
   'goal-icon': (el) => { newGoalIcon = el.dataset.value; pressIn(el, 'goal-icon'); },
   'quick-amount': (el) => {
     const input = $('#goal-form').amount;
@@ -1296,6 +1357,29 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.id === 'import-pocket') { state.prefs.importPocket = el.value; save(state); return; }
+  if (el.id === 'goal-pocket' || el.id === 'goal-track') {
+    const title = $('#sheet-title').textContent;
+    const g = state.goals.find((x) => x.name === title) || null;
+    const gid = $('#goal-form [data-action="delete-goal"]')?.dataset.id;
+    const goal = state.goals.find((x) => x.id === gid) || g;
+    if (!goal) return;
+    if (el.id === 'goal-pocket') {
+      if (goalTracksPocket(goal)) goal.saved = goalSaved(goal); // keep the amount when unlinking
+      goal.pocket = el.value; if (!el.value) goal.track = 'manual';
+    } else {
+      if (!el.checked) goal.saved = goalSaved(goal);
+      goal.track = el.checked ? 'pocket' : 'manual';
+    }
+    goal.u = stamp(); save(state); render(); schedulePush();
+    goalSheet(goal.id);
+    return;
+  }
+  if (el.id === 'newgoal-pocket') {
+    const row = $('#newgoal-track-row'); if (row) row.hidden = !el.value;
+    if (!el.value) { const cb = row?.querySelector('input'); if (cb) cb.checked = false; $('#newgoal-saved-field').hidden = false; }
+    return;
+  }
+  if (el.name === 'track' && el.closest('#newgoal-form')) { $('#newgoal-saved-field').hidden = el.checked; return; }
   if (el.id === 'cycle-day') { state.cycleDay = Number(el.value); state.cycleU = stamp(); save(state); render(); schedulePush(); toast(`Your month now runs ${cycleLabel()}`); return; }
   if (el.id === 'import-file' && el.files && el.files[0]) {
     const reader = new FileReader();

@@ -14,7 +14,7 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 | **+ (centre)** | Add income, expense, or a transfer between pockets (e.g. BCA → GoPay top-up, not counted as spending) |
 | **Pockets** | Add / edit / delete bank accounts, e-wallets and cash, set the current balance, see in/out per month and filter transactions by pocket |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
-| **Plan** | Budgets (ring, daily allowance, per-category limits, recurring payments with Mark / Unmark), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
+| **Plan** | Budgets (ring, daily allowance, per-category limits, recurring payments with Mark / Unmark), Goals (saved in a pocket, optionally following that pocket's balance; add money with an optional transfer between pockets; 50/30/20 check; savings calculator), Portfolio (coming soon) |
 
 Data is always saved on the device first (`localStorage`), so the app works offline. When you sign in, it also syncs to your account in the cloud (Cloudflare D1) and merges changes from your other devices.
 
@@ -111,7 +111,7 @@ npx wrangler pages dev . --d1 DB=jon-pocket-local
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v9'` to `'rencana-v10'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v10'` to `'rencana-v11'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.

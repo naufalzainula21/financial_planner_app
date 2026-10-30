@@ -6,11 +6,11 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 
 | Tab | Features |
 |---|---|
-| **Home** | Welcome header, purple "Spent" card with ring progress, balance / income / saved, round category shortcuts, budget tip banner, recent transactions |
-| **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, export CSV, demo / reset data, change your name |
+| **Home** | Get-started checklist for new users, welcome header, purple "Spent" card with ring progress, balance / income / saved, round category shortcuts, budget tip banner, recent transactions |
+| **Transactions** | Search, filter tabs (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, export CSV, delete all data, change your name |
 | **+ (centre)** | Add income or expense |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
-| **Plan** | Budgets (ring, daily allowance, per-category limits), Goals (add money, 50/30/20 check, savings calculator), Portfolio (sample data) |
+| **Plan** | Budgets (ring, daily allowance, per-category limits), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
 
 Data is saved in the browser's `localStorage` on that device only. There is no account or server yet.
 
@@ -22,7 +22,7 @@ rencana/
 ├── styles.css             All styles (colours/tokens at the top)
 ├── js/
 │   ├── app.js             Pages, sheets, events, routing (#/home, #/activity, #/stats, #/plan)
-│   ├── data.js            Saving/loading + demo data + sample portfolio
+│   ├── data.js            Saving/loading (starts empty)
 │   ├── format.js          Rupiah formatting, dates, escaping
 │   └── icons.js           Categories and line icons
 ├── manifest.webmanifest   Makes it installable
@@ -79,10 +79,10 @@ npx wrangler pages deploy . --project-name rencana
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v2'` to `'rencana-v3'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v3'` to `'rencana-v4'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
-Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Demo data is in `js/data.js`.
+Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.
 
 ## Next steps (when you're ready)
 - **Accounts & sync across devices:** add a backend — e.g. Cloudflare D1 (database) + Pages Functions, or Supabase / Firebase.

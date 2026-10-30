@@ -1,5 +1,5 @@
 // Rencana — budget tracker web app (no framework, no build step).
-import { load, save, demoState, emptyState, PORTFOLIO } from './data.js';
+import { load, save, emptyState, STORAGE_KEY } from './data.js';
 import {
   idr, idrSigned, idrShort, parseAmount, groupDigits, isoDate, monthKey, monthLabel, shortMonth,
   shortDay, esc, uid
@@ -154,19 +154,39 @@ const PAGES = {
     const b = budgetSummary();
     const recent = sortedTx(state.transactions).slice(0, 5);
     const monthName = now().toLocaleDateString('en-GB', { month: 'long' });
-    const banner = b.p < 75 ? `You're doing great! <b>${idr(b.left)}</b> left in your budget.`
+    const noBudget = b.total === 0;
+    const banner = noBudget ? `Set a monthly budget to see how much you can still spend.`
+      : b.p < 75 ? `You're doing great! <b>${idr(b.left)}</b> left in your budget.`
       : b.p < 100 ? `Heads up: only <b>${idr(b.left)}</b> left for ${daysLeftInMonth()} days.`
       : `You're over budget by <b>${idr(-b.left)}</b> this month.`;
+    const isNew = !state.transactions.length;
+    const steps = [
+      { done: state.transactions.some((t) => t.type === 'income'), title: 'Add your income', sub: 'Salary, freelance or any money in', action: 'open-income' },
+      { done: !noBudget, title: 'Set a monthly budget', sub: 'Choose limits for food, transport and more', action: 'add-budget' },
+      { done: state.goals.length > 0, title: 'Create a savings goal', sub: 'An emergency fund is a good first goal', action: 'add-goal' }
+    ];
+    const showSteps = steps.some((s) => !s.done);
 
     return {
       header: 'welcome',
       html: `
+      ${showSteps ? `
+      <section class="card lg stack" aria-label="Get started" style="gap:12px">
+        <div class="stack" style="gap:2px"><span class="t-h3">Get started</span><span class="t-label">${steps.filter((s) => s.done).length} of 3 done</span></div>
+        ${steps.map((s, i) => `
+          <button type="button" class="row" data-action="${s.action}" ${s.done ? 'disabled' : ''} style="border:0;background:none;padding:6px 0;text-align:left;width:100%;color:var(--ink);opacity:${s.done ? 0.55 : 1}">
+            <span style="width:32px;height:32px;border-radius:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;${s.done ? 'background:#E3F6EC;color:var(--pos)' : 'background:var(--primary-50);color:var(--primary)'}">${s.done ? '✓' : i + 1}</span>
+            <span class="grow stack" style="gap:0"><span class="t-strong" style="${s.done ? 'text-decoration:line-through' : ''}">${s.title}</span><span class="t-small">${s.sub}</span></span>
+            ${s.done ? '' : svg('chev', 'style="width:16px;height:16px;fill:none;stroke:#A3A3B8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"')}
+          </button>`).join('')}
+      </section>` : ''}
+
       <section class="hero" aria-label="Spending this month">
         <div class="between" style="align-items:center">
           <div class="stack" style="gap:2px;min-width:0">
             <span class="t-label">Spent</span>
             <span class="t-display">${money(b.used)}</span>
-            <span class="t-small">of ${money(b.total)}</span>
+            <span class="t-small">${noBudget ? 'No budget set yet' : `of ${money(b.total)}`}</span>
           </div>
           ${ring(b.p, monthName)}
         </div>
@@ -185,13 +205,13 @@ const PAGES = {
           </button>`).join('')}
       </div>
 
-      <button type="button" class="banner" data-action="lesson">
+      <button type="button" class="banner" data-action="${noBudget ? 'add-budget' : 'lesson'}">
         <span class="art">${svg('piggy')}</span>
-        <p>${banner}<br><span style="font-size:12px;font-weight:500;opacity:0.8">Tap to learn the 50/30/20 rule</span></p>
+        <p>${banner}<br><span style="font-size:12px;font-weight:500;opacity:0.8">${noBudget ? 'Tap to add your first budget' : 'Tap to learn the 50/30/20 rule'}</span></p>
       </button>
 
-      <div class="section-head"><h2>Recent</h2><a class="see-all" href="#/activity">See All</a></div>
-      ${recent.length ? txList(recent) : '<p class="empty">No transactions yet. Tap + to add your first one.</p>'}
+      <div class="section-head"><h2>Recent</h2>${isNew ? '' : '<a class="see-all" href="#/activity">See All</a>'}</div>
+      ${recent.length ? txList(recent) : `<div class="list-card"><p class="empty">No transactions yet.<br>Tap the <b style="color:var(--primary)">+</b> button below to add your first one.</p></div>`}
       `
     };
   },
@@ -239,7 +259,8 @@ const PAGES = {
     const tt = totals(inRange);
     const weekTx = state.transactions.filter((t) => toDate(t.date) > new Date(today0 - 7 * DAY));
     const weekSaved = totals(weekTx).net;
-    const showBanner = state.prefs.bannerHiddenOn !== isoDate(d);
+    const showBanner = weekTx.length > 0 && state.prefs.bannerHiddenOn !== isoDate(d);
+    const hasData = values.some((v) => v > 0);
 
     const tab = state.prefs.statsTab;
     let listHtml;
@@ -269,7 +290,11 @@ const PAGES = {
       ${textTabs([['weekly', 'Weekly'], ['monthly', 'Monthly'], ['yearly', 'Yearly']], 'set-period', period, 'Period')}
       <span class="t-label" style="margin-top:-8px">${rangeLabel}</span>
       <div class="card lg" style="padding:16px 14px 14px">
-        ${areaChart(values, labels, state.prefs.hide ? '' : idrShort(values[values.length - 1]))}
+        ${hasData ? areaChart(values, labels, state.prefs.hide ? '' : idrShort(values[values.length - 1]))
+          : `<div class="empty" style="height:190px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px">
+               <span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('invest')}</span>
+               No spending in this period yet.<br>Your chart appears once you add expenses.
+             </div>`}
         <div class="legend-row">
           <span>Income : <b class="pos">${state.prefs.hide ? '••••' : '+' + idrShort(tt.income)}</b></span>
           <span>Expense : <b class="neg">${state.prefs.hide ? '••••' : '−' + idrShort(tt.expense)}</b></span>
@@ -315,6 +340,7 @@ function planBudgets() {
 
     <div class="section-head"><h2>Categories</h2></div>
     <div class="list-card">
+      ${Object.keys(state.budgets).length ? '' : '<p class="empty">No budgets yet.<br>Add one for each category you want to keep an eye on.</p>'}
       ${Object.entries(state.budgets).map(([cat, limit]) => {
         const s = b.spent[cat] || 0, p = pct(s, limit), warn = p >= 90, c = CATEGORIES[cat] || CATEGORIES.other;
         return `
@@ -398,29 +424,16 @@ function planGoals() {
 }
 
 function planPortfolio() {
-  const pf = PORTFOLIO[state.prefs.asset];
-  const vals = pf.line.map((y) => 120 - y);
-  const months = ['May', '', 'Jun', '', 'Jul', '', 'Aug', '', 'Sep', '', 'Oct'];
-  const tiles = [['Available', 'Cash'], ['Compare with IHSG', 'Analytics'], ['Payouts & income', 'Dividends'], ['Prices & payouts', 'Alerts'], ['Diversification', 'Risk'], ['Profit this year', 'Taxes']];
   return `
-    ${seg([['stocks', 'Stocks'], ['crypto', 'Crypto']], 'set-asset', state.prefs.asset)}
     <section class="hero" style="gap:4px">
-      <span class="t-label">Portfolio value · sample data</span>
-      <span class="t-display">${money(pf.value)}</span>
-      <span class="row" style="gap:8px;margin-top:6px"><span class="chip gain">▲ ${idr(pf.gain)} · ${pf.pct}</span><span class="t-small">all time</span></span>
+      <span class="t-label">Portfolio value</span>
+      <span class="t-display">${money(0)}</span>
+      <span class="t-small">Stocks and crypto</span>
     </section>
-    <div class="card" style="padding:14px">${areaChart(vals, months, '')}</div>
-    <div class="grid-2">
-      ${tiles.map(([sub, title]) => `<button type="button" class="tile-btn" data-action="soon" data-value="${title}"><span class="stack" style="gap:0;min-width:0"><span class="t-small">${sub}</span><span class="t-strong">${title}</span></span>${svg('chev', 'class="chev"')}</button>`).join('')}
-    </div>
-    <div class="section-head"><h2>Holdings</h2></div>
-    <div class="list-card">
-      ${pf.holdings.map((h) => `
-        <div class="tx">
-          <span class="cat" style="background:var(--primary-50);color:var(--primary-700);font-size:11px;font-weight:700">${h.sym}</span>
-          <div class="meta"><span class="name">${h.name}</span><span class="t-small">${h.qty}</span></div>
-          <div class="amt"><b style="color:var(--ink)">${money(h.value)}</b><span class="t-small" style="font-weight:600;color:${h.chg >= 0 ? 'var(--pos)' : 'var(--neg)'}">${h.chg > 0 ? '+' : ''}${h.chg.toFixed(1).replace('.', ',')}%</span></div>
-        </div>`).join('')}
+    <div class="card lg stack" style="align-items:center;text-align:center;gap:10px;padding:28px 20px">
+      <span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('invest')}</span>
+      <span class="t-h3">No investments yet</span>
+      <span class="t-body" style="color:var(--muted);max-width:30ch">Tracking stocks and crypto with live prices is coming in a later update.</span>
     </div>`;
 }
 
@@ -484,7 +497,9 @@ function appbarHtml(page) {
   if (page.header === 'welcome') {
     return `
       <a class="avatar" href="#/home" aria-label="Rencana home"><span class="logo-n">n</span><span class="logo-dot"></span></a>
-      <div class="appbar-title"><span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1></div>
+      <div class="appbar-title">${state.prefs.name
+        ? `<span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1>`
+        : `<span class="hello">Welcome to</span><h1>Rencana</h1>`}</div>
       <div class="appbar-action">
         <button type="button" class="icon-btn" data-action="toggle-hide" aria-label="${state.prefs.hide ? 'Show' : 'Hide'} amounts">${svg(state.prefs.hide ? 'eyeOff' : 'eye')}</button>
         ${actionButton('bell')}
@@ -724,10 +739,9 @@ function lessonSheet() {
 function dataSheet() {
   openSheet('Your data', `
     <p class="t-body" style="color:var(--ink-2)">Everything is saved only in this browser on this device. Nothing is sent to a server.</p>
-    <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" value="${esc(state.prefs.name)}"></label>
+    <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
-    <button type="button" class="tile-btn" data-action="reset-demo" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('other')}<span class="stack" style="gap:0"><span class="t-strong">Reload demo data</span><span class="t-small">Replace everything with sample data</span></span></span></button>
-    <button type="button" class="tile-btn" data-action="start-empty" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px">${catTile('shopping')}<span class="stack" style="gap:0"><span class="t-strong">Start fresh</span><span class="t-small">Clear transactions and goals, keep budgets</span></span></span></button>`);
+    <button type="button" class="tile-btn" data-action="start-empty" style="box-shadow:none;border:1px solid var(--line)"><span class="row" style="gap:12px"><span class="cat" style="background:#FDE7E7;color:#B42318">${svg('reset')}</span><span class="stack" style="gap:0"><span class="t-strong">Delete all data</span><span class="t-small">Remove every transaction, budget and goal</span></span></span></button>`);
 }
 function exportCsv() {
   const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Paid with', 'Note']];
@@ -764,7 +778,12 @@ function askConfirm(title, message, okLabel, onYes) {
 const ACTIONS = {
   'open-tx': () => txSheet(),
   'edit-tx': (el) => { const t = state.transactions.find((x) => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },
-  'tx-type': (el) => { readTxForm(); txDraft.type = el.dataset.value; drawTxSheet(); },
+  'tx-type': (el) => {
+    readTxForm(); txDraft.type = el.dataset.value;
+    if (txDraft.type === 'income' && txDraft.method === 'Debit card') txDraft.method = 'Bank transfer';
+    if (txDraft.type === 'expense' && txDraft.method === 'Bank transfer' && !txDraft.id) txDraft.method = 'Debit card';
+    drawTxSheet();
+  },
   'tx-cat': (el) => { readTxForm(); txDraft.cat = el.dataset.value; drawTxSheet(); },
   'delete-tx': () => {
     readTxForm();
@@ -809,12 +828,10 @@ const ACTIONS = {
   lesson: lessonSheet,
   'data-menu': dataSheet,
   'export-csv': () => { exportCsv(); toast('CSV downloaded'); },
-  'reset-demo': () => askConfirm('Reload demo data?', 'All your transactions, budgets and goals will be replaced with sample data.', 'Replace', () => {
-    const name = state.prefs.name; state = demoState(); state.prefs.name = name; closeSheet(); commit('Demo data loaded');
+  'start-empty': () => askConfirm('Delete all data?', 'Every transaction, budget and goal on this device will be removed. This cannot be undone.', 'Delete all', () => {
+    const name = state.prefs.name; state = emptyState(); state.prefs.name = name; closeSheet(); commit('All data deleted');
   }),
-  'start-empty': () => askConfirm('Start fresh?', 'All transactions and goals will be cleared. Your budgets stay. This cannot be undone.', 'Clear', () => {
-    const { budgets, prefs } = state; state = emptyState(); state.budgets = budgets; state.prefs = prefs; closeSheet(); commit('Starting fresh');
-  }),
+  'open-income': () => { txSheet(); txDraft.type = 'income'; txDraft.method = 'Bank transfer'; drawTxSheet(); },
   soon: (el) => toast(`${el.dataset.value} is coming soon`)
 };
 
@@ -843,9 +860,9 @@ document.addEventListener('input', (e) => {
     $('#tx-list').innerHTML = activityList();
   }
   if (el.id === 'name-input') {
-    state.prefs.name = el.value.trim() || 'there';
+    state.prefs.name = el.value.trim();
     save(state);
-    if (currentTab === 'home') $('#appbar h1').textContent = state.prefs.name;
+    if (currentTab === 'home') $('#appbar').innerHTML = appbarHtml({ header: 'welcome' });
   }
 });
 
@@ -861,7 +878,7 @@ function toast(msg) {
 }
 
 /* Keep data in sync if the app is open in two tabs */
-window.addEventListener('storage', (e) => { if (e.key === 'rencana:v1') { state = load(); render(); } });
+window.addEventListener('storage', (e) => { if (e.key === STORAGE_KEY) { state = load(); render(); } });
 
 /* Installable + offline */
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {

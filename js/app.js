@@ -1,4 +1,4 @@
-// Rencana — budget tracker web app (no framework, no build step).
+// Jon Pocket — budget tracker web app (no framework, no build step).
 import { load, save, emptyState, STORAGE_KEY } from './data.js';
 import {
   idr, idrSigned, idrShort, parseAmount, groupDigits, isoDate, monthKey, monthLabel, shortMonth,
@@ -496,10 +496,10 @@ function actionButton(kind) {
 function appbarHtml(page) {
   if (page.header === 'welcome') {
     return `
-      <a class="avatar" href="#/home" aria-label="Rencana home"><span class="logo-n">n</span><span class="logo-dot"></span></a>
+      <a class="avatar" href="#/home" aria-label="Jon Pocket home"><span class="logo-n">n</span><span class="logo-dot"></span></a>
       <div class="appbar-title">${state.prefs.name
         ? `<span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1>`
-        : `<span class="hello">Welcome to</span><h1>Rencana</h1>`}</div>
+        : `<span class="hello">Welcome to</span><h1>Jon Pocket</h1>`}</div>
       <div class="appbar-action">
         <button type="button" class="icon-btn" data-action="toggle-hide" aria-label="${state.prefs.hide ? 'Show' : 'Hide'} amounts">${svg(state.prefs.hide ? 'eyeOff' : 'eye')}</button>
         ${actionButton('bell')}
@@ -526,7 +526,7 @@ function render() {
   view.innerHTML = page.html;
   view.dataset.tab = currentTab;
   view.scrollTop = keepScroll;
-  document.title = `${page.title || 'Home'} · Rencana`;
+  document.title = `${page.title || 'Home'} · Jon Pocket`;
   document.querySelectorAll('.tabbar a').forEach((a) => {
     if (a.dataset.tab === currentTab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });

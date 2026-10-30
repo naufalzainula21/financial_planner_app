@@ -1,4 +1,4 @@
-# Rencana — Financial Planner (web app)
+# Jon Pocket — Budget Tracker (web app)
 
 A mobile-first budget tracker (purple template style) that runs in the browser and can be installed on a phone's home screen like a native app (PWA). Plain HTML, CSS and JavaScript — **no build step, no dependencies**.
 

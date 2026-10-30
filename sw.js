@@ -1,6 +1,6 @@
-// Service worker: makes Rencana installable and usable offline.
+// Service worker: makes Jon Pocket installable and usable offline.
 // Bump CACHE when you change files so phones pick up the new version.
-const CACHE = 'rencana-v3';
+const CACHE = 'rencana-v4';
 const SHELL = [
   '/',
   '/index.html',

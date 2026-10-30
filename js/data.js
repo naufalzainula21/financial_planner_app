@@ -24,7 +24,8 @@ export function emptyState() {
   return {
     v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], accounts: defaultPockets(), prefs: { ...DEFAULT_PREFS },
     // sync bookkeeping: when budgets / name last changed, and ids deleted (id -> time)
-    budgetsU: 0, nameU: 0, deleted: {}
+    budgetsU: 0, nameU: 0, deleted: {},
+    cycleDay: 25, cycleU: 0 // month runs from this day (payday) to the day before, next month
   };
 }
 
@@ -39,7 +40,8 @@ export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name
 export function toDoc(s) {
   return {
     transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], budgets: s.budgets, budgetsU: s.budgetsU || 0,
-    deleted: s.deleted || {}, openingBalance: s.openingBalance || 0, name: s.prefs?.name || '', nameU: s.nameU || 0
+    deleted: s.deleted || {}, openingBalance: s.openingBalance || 0, name: s.prefs?.name || '', nameU: s.nameU || 0,
+    cycleDay: s.cycleDay || 25, cycleU: s.cycleU || 0
   };
 }
 
@@ -71,7 +73,9 @@ export function mergeDocs(a, b) {
     deleted,
     openingBalance: a.openingBalance || b.openingBalance || 0,
     name: (aN >= bN ? a.name : b.name) || '',
-    nameU: Math.max(aN, bN)
+    nameU: Math.max(aN, bN),
+    cycleDay: ((a.cycleU || 0) >= (b.cycleU || 0) ? a.cycleDay : b.cycleDay) || 25,
+    cycleU: Math.max(a.cycleU || 0, b.cycleU || 0)
   };
 }
 

@@ -8,10 +8,11 @@ A mobile-first budget tracker (purple template style) that runs in the browser a
 |---|---|
 | **Home** | Get-started checklist for new users, purple card with total balance (sum of all pockets) and this month's income / expenses, Pockets row (Bank Jago, BCA, GoPay, OVO + your own) with each balance, "Spent this month" card with budget progress, goals progress, recent transactions |
 | **Transactions** | Search, round category filters (All, Income, Recurring, Food, Transport…), grouped by day, "View Details" to edit or delete, import / export CSV, delete all data, change your name |
+| **Monthly cycle** | A "month" runs from your payday (default the 25th: 25 Oct – 24 Nov). Change it in the data sheet → "Month starts on". Used by Home, budgets, Stats and the 50/30/20 check. |
 | **Sign-in page** | Shown before entering the app on the live site: sign in or create an account. Each account's data is private. |
 | **Account** (tap the logo, or Transactions → sliders) | Cloud sync status, sync now, sign out |
 | **+ (centre)** | Add income, expense, or a transfer between pockets (e.g. BCA → GoPay top-up, not counted as spending) |
-| **Pockets** | Add / edit / delete bank accounts and e-wallets, set the current balance, see in/out per month and filter transactions by pocket |
+| **Pockets** | Add / edit / delete bank accounts, e-wallets and cash, set the current balance, see in/out per month and filter transactions by pocket |
 | **Stats** | Weekly saved banner, Weekly / Monthly / Yearly spending chart, income vs expense, Categories / Top Spending / Top Income |
 | **Plan** | Budgets (ring, daily allowance, per-category limits, recurring payments with Mark / Unmark), Goals (add money, 50/30/20 check, savings calculator), Portfolio (coming soon) |
 
@@ -110,7 +111,7 @@ npx wrangler pages dev . --d1 DB=jon-pocket-local
 It then opens full-screen with its own icon, like a native app.
 
 ## After you change files
-Open `sw.js` and bump `const CACHE = 'rencana-v8'` to `'rencana-v9'` (and so on) before deploying, so installed phones pick up the new version.
+Open `sw.js` and bump `const CACHE = 'rencana-v9'` to `'rencana-v10'` (and so on) before deploying, so installed phones pick up the new version.
 
 ## Changing the look
 Colours live at the top of `styles.css` (`--primary`, `--yellow` …). Categories (names, colours, icons) are in `js/icons.js`. Saving and loading is in `js/data.js`.

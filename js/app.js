@@ -24,7 +24,25 @@ const stamp = () => Date.now();
    ========================================================= */
 const now = () => new Date();
 const DAY = 86400000;
-const inMonth = (t, d = now()) => t.date.slice(0, 7) === monthKey(d);
+/* ---------- Monthly cycle (e.g. payday on the 25th: 25 Oct – 24 Nov) ---------- */
+const cycleDay = () => Math.min(28, Math.max(1, Number(state.cycleDay) || 25));
+function cycleRange(d = now(), offset = 0) {
+  const cd = cycleDay();
+  let m = d.getMonth();
+  if (d.getDate() < cd) m -= 1;
+  const start = new Date(d.getFullYear(), m + offset, cd);
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, cd - 1);
+  return { start, end, startIso: isoDate(start), endIso: isoDate(end) };
+}
+const fmtDM = (x) => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const cycleLabel = (r = cycleRange()) => `${fmtDM(r.start)} – ${fmtDM(r.end)}`;
+let cycleCache = { key: '', r: null };
+function currentCycle() {
+  const key = isoDate(now()) + '|' + cycleDay();
+  if (cycleCache.key !== key) cycleCache = { key, r: cycleRange() };
+  return cycleCache.r;
+}
+const inMonth = (t) => { const r = currentCycle(); return t.date >= r.startIso && t.date <= r.endIso; };
 const toDate = (iso) => new Date(iso + 'T00:00:00');
 
 function totals(list) {
@@ -56,7 +74,9 @@ function pocketBalance(id) {
   return bal;
 }
 const balance = () => (state.openingBalance || 0) + pockets().reduce((s, p) => s + pocketBalance(p.id), 0);
-const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(p.kind === 'ewallet' ? 'wallet' : 'bank')}</span>`;
+const POCKET_KINDS = { bank: { label: 'Bank', long: 'Bank account', icon: 'bank' }, ewallet: { label: 'E-wallet', long: 'E-wallet', icon: 'wallet' }, cash: { label: 'Cash', long: 'Cash', icon: 'cash' } };
+const kindOf = (p) => POCKET_KINDS[p?.kind] || POCKET_KINDS.bank;
+const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(kindOf(p).icon)}</span>`;
 const goalsSaved = () => state.goals.reduce((s, g) => s + g.saved, 0);
 
 function spentByCat(list) {
@@ -65,8 +85,7 @@ function spentByCat(list) {
   return m;
 }
 function daysLeftInMonth() {
-  const d = now();
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate() + 1;
+  return Math.round((currentCycle().end - toDate(isoDate(now()))) / DAY) + 1;
 }
 function monthsUntil(ym) {
   const [y, m] = ym.split('-').map(Number);
@@ -235,7 +254,7 @@ const PAGES = {
         <div class="stack" style="gap:4px">
           <span class="t-label">Total balance</span>
           <span class="t-display" style="font-size:34px">${money(balance())}</span>
-          <span class="t-small">${monthName} ${now().getFullYear()} · ${m.net >= 0 ? 'saved' : 'overspent'} ${money(Math.abs(m.net), true)}</span>
+          <span class="t-small">${cycleLabel()} · ${m.net >= 0 ? 'saved' : 'overspent'} ${money(Math.abs(m.net), true)}</span>
         </div>
         <div class="grid-2" style="gap:10px">
           <div class="glass"><span class="t-small row" style="gap:6px">${svg('up', 'style="width:14px;height:14px;fill:none;stroke:#C8F7D9;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"')}Income</span><b style="font-size:16px">${money(m.income)}</b></div>
@@ -258,7 +277,7 @@ const PAGES = {
       </div>
 
       <section class="card lg stack" aria-label="Spent this month" style="gap:12px">
-        <div class="between"><span class="t-h3">Spent this month</span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
+        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
         <div class="between" style="align-items:flex-end">
           <span class="t-stat">${money(m.expense)}</span>
           ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
@@ -336,16 +355,18 @@ const PAGES = {
       for (let i = 0; i < 7; i++) { const day = new Date(from.getTime() + i * DAY); values.push(exp(day, day)); labels.push(day.toLocaleDateString('en-GB', { weekday: 'short' })); }
       rangeLabel = `${from.toLocaleDateString('en-GB', { day: 'numeric' })} – ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
     } else if (period === 'monthly') {
-      from = new Date(d.getFullYear(), d.getMonth(), 1);
-      for (let i = 1; i <= d.getDate(); i++) { const day = new Date(d.getFullYear(), d.getMonth(), i); values.push(exp(day, day)); labels.push(String(i)); }
-      rangeLabel = monthLabel(d);
+      from = currentCycle().start;
+      for (let day = new Date(from); day <= today0; day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1)) { values.push(exp(day, day)); labels.push(String(day.getDate())); }
+      if (values.length === 1) { values.unshift(0); labels.unshift(''); }
+      rangeLabel = cycleLabel();
     } else {
-      from = new Date(d.getFullYear(), d.getMonth() - 11, 1);
-      for (let i = 0; i < 12; i++) {
-        const a = new Date(from.getFullYear(), from.getMonth() + i, 1), b = new Date(a.getFullYear(), a.getMonth() + 1, 0);
-        values.push(exp(a, b)); labels.push(a.toLocaleDateString('en-GB', { month: 'short' }));
+      const first = cycleRange(d, -11);
+      from = first.start;
+      for (let i = -11; i <= 0; i++) {
+        const r = cycleRange(d, i);
+        values.push(exp(r.start, r.end)); labels.push(r.start.toLocaleDateString('en-GB', { month: 'short' }));
       }
-      rangeLabel = `${shortMonth(from)} – ${shortMonth(d)}`;
+      rangeLabel = `${fmtDM(first.start)} ${first.start.getFullYear()} – ${fmtDM(currentCycle().end)} ${currentCycle().end.getFullYear()}`;
     }
     const inRange = state.transactions.filter((t) => toDate(t.date) >= from && toDate(t.date) <= to);
     const tt = totals(inRange);
@@ -422,7 +443,7 @@ function planBudgets() {
         </div>
         ${ring(b.p, `${daysLeftInMonth()} days left`)}
       </div>
-      <div class="glass"><span class="t-small">Daily allowance for the rest of ${now().toLocaleDateString('en-GB', { month: 'long' })}</span><b style="font-size:16px">${money(perDay)}/day</b></div>
+      <div class="glass"><span class="t-small">Daily allowance until ${fmtDM(currentCycle().end)}</span><b style="font-size:16px">${money(perDay)}/day</b></div>
     </section>
 
     <button type="button" class="tile-btn" data-action="payments">
@@ -866,7 +887,7 @@ function managePockets() {
       ${pockets().map((p) => `
         <div class="tx">
           ${pocketIcon(p)}
-          <div class="meta"><span class="name ellipsis">${esc(p.name)}</span><span class="t-small">${p.kind === 'ewallet' ? 'E-wallet' : 'Bank'} · ${money(pocketBalance(p.id))}</span></div>
+          <div class="meta"><span class="name ellipsis">${esc(p.name)}</span><span class="t-small">${kindOf(p).label} · ${money(pocketBalance(p.id))}</span></div>
           <button type="button" class="pill" data-action="edit-pocket" data-id="${p.id}" style="flex-shrink:0;min-height:36px">Edit</button>
         </div>`).join('') || '<p class="empty">No pockets yet.</p>'}
     </div>
@@ -885,7 +906,7 @@ function openPocket(id) {
   }
   setSheet(p.name, `
     <div class="stack" style="gap:6px;background:${p.color}14;border-radius:18px;padding:16px">
-      <div class="row" style="gap:12px">${pocketIcon(p, 44)}<span class="stack" style="gap:0"><span class="t-small">${p.kind === 'ewallet' ? 'E-wallet' : 'Bank account'} balance</span><span class="t-stat">${money(pocketBalance(id))}</span></span></div>
+      <div class="row" style="gap:12px">${pocketIcon(p, 44)}<span class="stack" style="gap:0"><span class="t-small">${kindOf(p).long} balance</span><span class="t-stat">${money(pocketBalance(id))}</span></span></div>
       <div class="between t-small" style="padding-top:6px"><span>In this month: <b class="pos">${money(inM, true)}</b></span><span>Out: <b class="neg">${money(outM, true)}</b></span></div>
     </div>
     <div class="btn-row">
@@ -906,12 +927,12 @@ function drawPocketForm(balanceText, nameText) {
   const d = pocketDraft;
   setSheet(d.id ? `Edit ${d.name}` : 'Add pocket', `
     <form id="pocket-form" class="stack" style="gap:16px" novalidate>
-      <label class="field"><span>Name</span><input class="input" name="name" maxlength="30" placeholder="e.g. Bank Jago, Dana, Cash" value="${esc(nameText ?? d.name)}" required></label>
-      ${seg([['bank', 'Bank account'], ['ewallet', 'E-wallet']], 'pocket-kind', d.kind)}
+      <label class="field"><span>Name</span><input class="input" name="name" maxlength="30" placeholder="${d.kind === 'cash' ? 'e.g. Cash, Wallet' : d.kind === 'ewallet' ? 'e.g. Dana, ShopeePay' : 'e.g. Mandiri, BRI'}" value="${esc(nameText ?? d.name)}" required></label>
+      ${seg([['bank', 'Bank'], ['ewallet', 'E-wallet'], ['cash', 'Cash']], 'pocket-kind', d.kind)}
       <label class="field"><span>Current balance</span>
         <span class="amount-input"><b>Rp</b><input name="balance" inputmode="numeric" placeholder="0" data-money value="${esc(balanceText)}"></span>
       </label>
-      <p class="t-small" style="margin-top:-8px">Type what the ${d.kind === 'ewallet' ? 'e-wallet' : 'bank'} app shows right now. Jon Pocket keeps it up to date as you add transactions.</p>
+      <p class="t-small" style="margin-top:-8px">${d.kind === 'cash' ? 'Count the cash you have right now.' : `Type what the ${d.kind === 'ewallet' ? 'e-wallet' : 'bank'} app shows right now.`} Jon Pocket keeps it up to date as you add transactions.</p>
       <div class="field"><span>Colour</span><div class="pills" role="group" aria-label="Colour">
         ${POCKET_COLORS.map((c) => `<button type="button" class="swatch" data-action="pocket-color" data-value="${c}" aria-pressed="${c === d.color}" aria-label="Colour ${c}" style="background:${c}"></button>`).join('')}
       </div></div>
@@ -1033,6 +1054,7 @@ function dataSheet() {
   openSheet('Your data', `
     <div id="cloud-card">${cloudCard()}</div>
     <label class="field"><span>Your name</span><input class="input" id="name-input" maxlength="24" placeholder="Shown on the Home screen" value="${esc(state.prefs.name)}"></label>
+    <label class="field"><span>Month starts on (payday)</span><select class="input" id="cycle-day">${Array.from({ length: 28 }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === cycleDay() ? 'selected' : ''}>${n === 1 ? '1st (calendar month)' : `${n}${n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : n === 21 ? 'st' : 'th'} of each month`}</option>`).join('')}</select></label>
     ${window.RENCANA_PREVIEW ? '' : `<button type="button" class="tile-btn" data-action="export-csv" ><span class="row" style="gap:12px">${catTile('income')}<span class="stack" style="gap:0"><span class="t-strong">Export transactions</span><span class="t-small">Download a CSV for Excel or Sheets</span></span></span></button>`}
     <label class="field"><span>Imported transactions go to</span><select class="input" id="import-pocket">${pockets().map((p) => `<option value="${p.id}" ${p.id === (pocketById(state.prefs.importPocket) ? state.prefs.importPocket : legacyPocket()) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
     <label class="tile-btn" style="cursor:pointer"><span class="row" style="gap:12px"><span class="cat" style="background:var(--primary-50);color:var(--primary)">${svg('download')}</span><span class="stack" style="gap:0"><span class="t-strong">Import transactions</span><span class="t-small">Add a CSV file (same format as the export)</span></span></span><input type="file" id="import-file" accept=".csv,text/csv" class="sr-only"></label>
@@ -1274,6 +1296,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.id === 'import-pocket') { state.prefs.importPocket = el.value; save(state); return; }
+  if (el.id === 'cycle-day') { state.cycleDay = Number(el.value); state.cycleU = stamp(); save(state); render(); schedulePush(); toast(`Your month now runs ${cycleLabel()}`); return; }
   if (el.id === 'import-file' && el.files && el.files[0]) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -1353,6 +1376,8 @@ function applyDoc(doc) {
   state.transactions = doc.transactions || [];
   state.goals = doc.goals || [];
   state.accounts = doc.accounts || [];
+  state.cycleDay = doc.cycleDay || 25;
+  state.cycleU = doc.cycleU || 0;
   state.budgets = doc.budgets || {};
   state.budgetsU = doc.budgetsU || 0;
   state.deleted = doc.deleted || {};

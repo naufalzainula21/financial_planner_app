@@ -1,6 +1,6 @@
 // Service worker: makes Jon Pocket installable and usable offline.
 // Bump CACHE when you change files so phones pick up the new version.
-const CACHE = 'rencana-v8';
+const CACHE = 'rencana-v9';
 const SHELL = [
   '/',
   '/index.html',

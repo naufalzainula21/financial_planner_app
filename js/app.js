@@ -98,33 +98,36 @@ function savedIn(offset = 0) {
   }
   return net;
 }
-function savingsPanel(income) {
+function savingsCard(income) {
   const sp = savingPockets();
   const catSaving = state.transactions.some((t) => t.type === 'expense' && isSavingCat(t.cat));
   if (!sp.length && !catSaving) return `
       <button type="button" class="tile-btn" data-action="add-savings-pocket" style="width:100%;background:#E3F6EC;border:0">
         <span class="row" style="gap:12px"><span class="cat" style="background:#fff;color:#17834F">${svg('piggy')}</span>
-          <span class="stack" style="gap:0"><span class="t-strong">Track your savings</span><span class="t-small">Add your savings account (e.g. Jago) as a Savings pocket. Money you move there counts as saved, not spent.</span></span></span>
+          <span class="stack" style="gap:0"><span class="t-strong">Track your savings</span><span class="t-small">Add your savings account as a pocket. Money you move there counts as saved, not spent.</span></span></span>
         ${svg('chev', 'class="chev"')}
       </button>`;
   const saved = savedIn(0), last = savedIn(-1);
   const total = sp.reduce((a, p) => a + pocketBalance(p.id), 0);
-  const savePct = state.prefs.savePct ?? 20;
-  const target = Math.round(income * savePct / 100);
+  const target = Math.round(income * 0.2);
   const share = income ? Math.round((Math.max(0, saved) / income) * 100) : 0;
   const diff = saved - last;
   return `
+      <section class="card lg stack" aria-label="Saved this month" style="gap:12px">
+        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Saved this month</span><span class="t-small">${cycleLabel()}</span></span>
+          <span class="cat" style="background:#E3F6EC;color:#17834F">${svg('piggy')}</span></div>
         <div class="between" style="align-items:flex-end">
           <span class="t-stat" style="color:${saved < 0 ? 'var(--neg)' : 'var(--pos)'}">${saved < 0 ? '−' : ''}${money(Math.abs(saved))}</span>
           ${income ? `<span class="t-label">${share}% of income</span>` : ''}
         </div>
-        ${income && target ? `${bar(pct(Math.max(0, saved), target), '#1FAA6B')}
-        <span class="t-small">${saved >= target ? `You reached your ${savePct}% target of ${money(target, true)}. Nice!` : `${money(target - Math.max(0, saved), true)} more to reach ${savePct}% of income (${money(target, true)})`}</span>` : income ? '' : '<span class="t-small">Add your income to see how much of it you save.</span>'}
+        ${income ? `${bar(pct(Math.max(0, saved), target), '#1FAA6B')}
+        <span class="t-small">${saved >= target ? `You reached the 20% target of ${money(target, true)}. Nice!` : `${money(target - Math.max(0, saved), true)} more to reach 20% of income (${money(target, true)})`}</span>` : '<span class="t-small">Add your income to see how much of it you save.</span>'}
         <div class="between t-small" style="border-top:1px solid var(--line);padding-top:10px;flex-wrap:wrap;gap:4px 12px">
           <span style="white-space:nowrap">Last month: <b style="color:var(--ink)">${money(last, true)}</b>${last || saved ? ` <span class="${diff >= 0 ? 'pos' : 'neg'}">(${diff >= 0 ? '+' : '−'}${money(Math.abs(diff), true)})</span>` : ''}</span>
           <span style="white-space:nowrap">In savings: <b style="color:var(--ink)">${money(total, true)}</b></span>
         </div>
-        <button type="button" class="btn primary" data-action="save-money" style="background:#1FAA6B">+ Save money</button>`;
+        <button type="button" class="btn primary" data-action="save-money" style="background:#1FAA6B">+ Save money</button>
+      </section>`;
 }
 const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(kindOf(p).icon)}</span>`;
 // A goal can follow its pocket's balance, or keep its own saved amount
@@ -255,8 +258,9 @@ function areaChart(values, labels, highlightLabel) {
 }
 
 
-/* ---------- "This month" card on Home: Spent · Budget · Saved (tap a tab or swipe) ---------- */
+/* ---------- "Spent this month" slides: Budget · Pace · Categories ---------- */
 let homeSlide = 0;
+const SLIDE_NAMES = ['Budget', 'Spending pace', 'By category'];
 
 function budgetSlide(b, noBudget, budgetMsg, topBudgets) {
   if (noBudget) {
@@ -375,46 +379,19 @@ function categorySlide() {
     </div>`;
 }
 
-const MONTH_TABS = ['Spent', 'Budget', 'Saved'];
-function monthCard(m, b, noBudget, budgetMsg, topBudgets) {
-  const spent = `
-    <div class="between" style="align-items:flex-end">
-      <span class="t-stat">${money(m.expense)}</span>
-      ${m.income ? `<span class="t-label">${pct(m.expense, m.income)}% of income</span>` : ''}
-    </div>
-    <span class="slide-title" style="padding-top:4px">${noBudget ? 'Daily spending' : 'Spending pace'}</span>
-    ${paceSlide(b, noBudget)}
-    <span class="slide-title" style="padding-top:8px;border-top:1px solid var(--line)">By category</span>
-    ${categorySlide()}`;
-  const budget = `
-    ${noBudget ? '' : `<div class="between" style="align-items:flex-end">
-      <span class="t-stat">${money(Math.max(0, b.left))}</span>
-      <span class="t-label">left of ${money(b.total, true)} · ${b.p}% used</span>
-    </div>`}
-    ${budgetSlide(b, noBudget, budgetMsg, topBudgets)}
-    <div class="between" style="gap:8px">
-      <button type="button" class="pill pill-primary" data-action="budget-assistant" style="min-height:34px">Adjust limits</button>
-      <a class="see-all" href="#/plan/budgets">All budgets</a>
-    </div>`;
-  const panels = [spent, budget, savingsPanel(m.income)];
+function spentSlides(m, b, noBudget, budgetMsg, topBudgets) {
+  const slides = [budgetSlide(b, noBudget, budgetMsg, topBudgets), paceSlide(b, noBudget), categorySlide()];
+  const names = noBudget ? ['Budget', 'Daily spending', 'By category'] : SLIDE_NAMES;
   return `
-    <section class="card lg stack" aria-label="This month" style="gap:12px;overflow:hidden">
-      <div class="between"><span class="stack" style="gap:0"><span class="t-h3">This month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span></div>
-      <div class="segmented" role="tablist" aria-label="This month">
-        ${MONTH_TABS.map((n, i) => `<button type="button" role="tab" data-action="spent-slide" data-value="${i}" aria-selected="${i === homeSlide}" aria-pressed="${i === homeSlide}" aria-controls="month-${i}">${n}</button>`).join('')}
-      </div>
-      <div class="slides" id="spent-slides" aria-label="This month details">
-        ${panels.map((html, i) => `<div class="slide stack" id="month-${i}" role="tabpanel" aria-label="${MONTH_TABS[i]}" style="gap:10px">${html}</div>`).join('')}
-      </div>
-    </section>`;
+    <div class="slides" id="spent-slides" aria-roledescription="carousel" aria-label="Spending details">
+      ${slides.map((html, i) => `<div class="slide stack" role="group" aria-roledescription="slide" aria-label="${names[i]} (${i + 1} of 3)" style="gap:10px">
+        <span class="slide-title">${names[i]}</span>${html}</div>`).join('')}
+    </div>
+    <div class="dots" role="tablist" aria-label="Choose a slide">
+      ${names.map((n, i) => `<button type="button" class="dot" role="tab" data-action="spent-slide" data-value="${i}" aria-label="${n}" aria-selected="${i === homeSlide}"></button>`).join('')}
+    </div>`;
 }
 
-function markMonthTab(i) {
-  document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => {
-    const on = String(Number(d.dataset.value) === i);
-    d.setAttribute('aria-selected', on); d.setAttribute('aria-pressed', on);
-  });
-}
 function fitSlides(i) {
   const el = $('#spent-slides');
   const slide = el?.children[i];
@@ -433,7 +410,7 @@ function initSlides() {
       fitSlides(i);
       if (i !== homeSlide) {
         homeSlide = i;
-        markMonthTab(i);
+        document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
       }
     }, 60);
   }, { passive: true });
@@ -517,7 +494,16 @@ const PAGES = {
         </button>
       </div>
 
-      ${monthCard(m, b, noBudget, budgetMsg, topBudgets)}
+      ${savingsCard(m.income)}
+
+      <section class="card lg stack" aria-label="Spent this month" style="gap:12px;overflow:hidden">
+        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><span class="row" style="gap:6px"><button type="button" class="pill pill-primary" data-action="budget-assistant" style="min-height:32px;padding:4px 12px">Adjust</button><a class="see-all" href="#/plan/budgets">Budgets</a></span></div>
+        <div class="between" style="align-items:flex-end">
+          <span class="t-stat">${money(m.expense)}</span>
+          ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
+        </div>
+        ${spentSlides(m, b, noBudget, budgetMsg, topBudgets)}
+      </section>
 
       <section class="card lg stack" aria-label="Goals" style="gap:12px">
         <div class="between"><span class="t-h3">Goals</span><a class="see-all" href="#/plan/goals">${state.goals.length ? 'See all' : ''}</a></div>
@@ -1847,7 +1833,7 @@ const ACTIONS = {
   'spent-slide': (el) => {
     const box = $('#spent-slides'); const i = Number(el.dataset.value);
     homeSlide = i;
-    markMonthTab(i);
+    document.querySelectorAll('[data-action="spent-slide"]').forEach((d) => d.setAttribute('aria-selected', String(Number(d.dataset.value) === i)));
     fitSlides(i);
     if (box) box.scrollTo({ left: i * box.clientWidth, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   },
@@ -2416,7 +2402,7 @@ const TOUR = [
   { route: '#/home', target: 'section.hero[aria-label="Balance"]', title: 'Your total balance', body: 'All your pockets added together. Below it you see this month’s income and expenses. Tap the eye icon at the top to hide amounts when someone is looking.' },
   { route: '#/home', target: '.pocket-row', title: 'Pockets', body: 'Each bank account, e-wallet or cash wallet is a pocket. Tap one to set its balance to what your bank app shows. Add more with <b>Add pocket</b>, or rename and delete them with <b>Manage</b>.' },
   { target: '.tab-add', title: 'Add a transaction', body: 'Tap <b>+</b> any time to record an <b>expense</b>, <b>income</b> or a <b>transfer</b> between your pockets. Pick a category and the pocket it came from. Transfers don’t count as spending.' },
-  { route: '#/home', target: 'section[aria-label="This month"]', title: 'This month', body: 'Tap <b>Spent</b>, <b>Budget</b> or <b>Saved</b> at the top, or swipe left and right: how much you spent and where it went, what’s left in your budgets, and how much you saved.' },
+  { route: '#/home', target: 'section[aria-label="Spent this month"]', title: 'Spent this month', body: 'Swipe left and right for three views: your budget, your spending pace by day, and which categories take the most money.' },
   { route: '#/home', target: 'section[aria-label="Goals"]', title: 'Savings goals', body: 'Saving for a laptop, a trip or an emergency fund? Create a goal and link it to a pocket. The progress then follows that pocket’s balance by itself.' },
   { route: '#/activity', target: '.search-row', title: 'Find any transaction', body: 'Search by name or note. Tap a transaction’s <b>View Details</b> to edit or delete it.' },
   { route: '#/activity', target: '.cat-grid', title: 'Filter and add categories', body: 'Tap a category to see only those transactions, or <b>Recurring</b> for regular bills. Missing one? Tap <b>Add</b> to make your own with its own icon and colour.' },

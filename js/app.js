@@ -490,7 +490,7 @@ const PAGES = {
       ${savingsCard(m.income)}
 
       <section class="card lg stack" aria-label="Spent this month" style="gap:12px;overflow:hidden">
-        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
+        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><span class="row" style="gap:6px"><button type="button" class="pill pill-primary" data-action="budget-assistant" style="min-height:32px;padding:4px 12px">Adjust</button><a class="see-all" href="#/plan/budgets">Budgets</a></span></div>
         <div class="between" style="align-items:flex-end">
           <span class="t-stat">${money(m.expense)}</span>
           ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
@@ -679,6 +679,11 @@ function planBudgets() {
       </div>
       <div class="glass"><span class="t-small">Daily allowance until ${fmtDM(currentCycle().end)}</span><b style="font-size:16px">${money(perDay)}/day</b></div>
     </section>
+
+    <button type="button" class="tile-btn" data-action="budget-assistant" style="background:var(--primary-50);border:0">
+      <span class="row" style="gap:12px"><span class="cat" style="background:var(--primary);color:#fff">${svg('sliders')}</span><span class="stack" style="gap:0"><span class="t-strong">Budget assistant</span><span class="t-small">Adjust every limit to the money you have now</span></span></span>
+      ${svg('chev', 'class="chev"')}
+    </button>
 
     ${budgetVsIncome(b)}
 
@@ -1039,6 +1044,132 @@ function budgetSheet(cat) {
     closeSheet();
     commit(editing ? 'Budget updated' : 'Budget added');
   });
+}
+
+/* ---------- Budget assistant: re-plans every category's limit from what you have right now ---------- */
+let astMoney = null; // money for this month typed in the assistant (null = use income)
+const round5k = (n) => Math.max(0, Math.ceil(n / 5000) * 5000);
+function expenseByCat(r) {
+  const m = {};
+  for (const t of state.transactions) if (t.type === 'expense' && t.date >= r.startIso && t.date <= r.endIso) m[t.cat] = (m[t.cat] || 0) + t.amount;
+  return m;
+}
+function assistantPlan(money, savePct) {
+  const r = currentCycle();
+  const spent = spentByCat(monthTx());
+  const totalSpent = Object.values(spent).reduce((a, v) => a + v, 0);
+  const saved = Math.max(0, savedIn(0));
+  const toSave = Math.max(0, Math.round(money * savePct / 100) - saved);
+  // Usual spending: average of the last 3 months that have data
+  const hist = {}; let months = 0;
+  for (let k = 1; k <= 3; k++) {
+    const m = expenseByCat(cycleRange(now(), -k));
+    if (!Object.keys(m).length) continue;
+    months++;
+    for (const [c, v] of Object.entries(m)) hist[c] = (hist[c] || 0) + v;
+  }
+  for (const c of Object.keys(hist)) hist[c] = hist[c] / months;
+  // Recurring bills not paid yet this month: keep their money aside
+  const reserve = {}, dueNames = {};
+  const paidNames = new Set(monthTx().filter((t) => t.type === 'expense').map((t) => t.name.trim().toLowerCase()));
+  for (const t of latestByName(state.transactions.filter((x) => x.type === 'expense' && isRecurring(x)))) {
+    if (paidNames.has(t.name.trim().toLowerCase())) continue;
+    reserve[t.cat] = (reserve[t.cat] || 0) + t.amount;
+    (dueNames[t.cat] = dueNames[t.cat] || []).push(t.name);
+  }
+  const totalDays = Math.round((r.end - r.start) / DAY) + 1;
+  const elapsed = Math.max(0.25, (totalDays - daysLeftInMonth() + 1) / totalDays);
+  const cats = [...new Set([...Object.keys(state.budgets), ...Object.keys(spent), ...Object.keys(hist), ...Object.keys(reserve)])]
+    .filter((c) => CATEGORIES[c] && CATEGORIES[c].type === 'expense');
+  const need = {};
+  for (const c of cats) {
+    const usual = hist[c] || state.budgets[c] || (spent[c] || 0) / elapsed;
+    need[c] = Math.max(0, usual - (spent[c] || 0) - (reserve[c] || 0)); // on top of bills still to pay
+  }
+  const reserved = cats.reduce((a, c) => a + (reserve[c] || 0), 0);
+  const isNeed = (c) => CATEGORIES[c]?.group === 'needs';
+  const sum = (f) => cats.filter(f).reduce((a, c) => a + need[c], 0);
+  const needsN = sum(isNeed), wantsN = sum((c) => !isNeed(c));
+  const pool = money - toSave - totalSpent;
+  const free = pool - reserved; // bills still to pay always keep their money
+  const alloc = {};
+  let status, extra = 0;
+  if (free <= 0) {
+    status = 'over';
+    for (const c of cats) alloc[c] = 0;
+  } else if (free >= needsN + wantsN) {
+    status = 'ok'; extra = free - needsN - wantsN;
+    for (const c of cats) alloc[c] = need[c];
+  } else if (free >= needsN) {
+    status = 'tight-wants';
+    const k = wantsN ? (free - needsN) / wantsN : 0;
+    for (const c of cats) alloc[c] = isNeed(c) ? need[c] : need[c] * k;
+  } else {
+    status = 'tight-needs';
+    const k = needsN ? free / needsN : 0;
+    for (const c of cats) alloc[c] = isNeed(c) ? need[c] * k : 0;
+  }
+  for (const c of cats) alloc[c] += reserve[c] || 0;
+  const rows = cats.map((c) => ({
+    cat: c, spent: spent[c] || 0, usual: Math.round(hist[c] || 0), due: dueNames[c] || [], current: state.budgets[c] || 0,
+    suggest: round5k((spent[c] || 0) + alloc[c]), full: alloc[c] < 1 && (spent[c] || 0) > 0
+  })).filter((x) => x.suggest > 0 || x.current > 0)
+    .sort((a, b) => (isNeed(b.cat) - isNeed(a.cat)) || (b.suggest - a.suggest));
+  return { rows, pool, toSave, saved, totalSpent, extra, status, months, daysLeft: daysLeftInMonth() };
+}
+function assistantSheet() {
+  const m = totals(monthTx());
+  const lastIncome = totals(state.transactions.filter((t) => { const r = cycleRange(now(), -1); return t.date >= r.startIso && t.date <= r.endIso; })).income;
+  const money_ = astMoney ?? (m.income || lastIncome);
+  const savePct = state.prefs.savePct ?? 20;
+  const p = assistantPlan(money_, savePct);
+  const left = Math.max(0, p.pool);
+  const msg = !money_ ? 'Type how much money you have for this month to get suggestions.'
+    : p.status === 'over' ? `You’ve already spent more than this month’s money after saving. Limits below are set to what you’ve spent, so anything more goes over. Try saving less this month.`
+    : p.status === 'tight-needs' ? 'Money is tight: bills you still have to pay are kept, needs (food, bills, transport, health) get the rest and other wants are paused until next month.'
+    : p.status === 'tight-wants' ? 'Needs are fully covered. Wants are cut down so you still hit your savings target.'
+    : `Everything fits${p.extra >= 5000 ? `, with <b>${money(p.extra, true)}</b> spare — keep it as a buffer or save it` : ''}.`;
+  setSheet('Budget assistant', `
+    <form id="ast-form" class="stack" style="gap:14px" novalidate>
+      <p class="t-small" style="color:var(--ink-2);margin:0">I look at your money for this month, what you’ve spent, bills still to pay and your usual spending${p.months ? ` (last ${p.months} month${p.months === 1 ? '' : 's'})` : ''}, then suggest a new limit for every category.</p>
+      <label class="field"><span>Money for this month ${m.income ? '(your income)' : lastIncome ? '(last month’s income)' : ''}</span>
+        <span class="amount-input"><b>Rp</b><input id="ast-money" inputmode="numeric" placeholder="0" data-money value="${money_ ? groupDigits(money_) : ''}"></span></label>
+      <div class="field"><span>Save this month</span>${seg([['0', '0%'], ['10', '10%'], ['20', '20%'], ['30', '30%']], 'ast-save', String(savePct))}</div>
+      <div class="stack" style="gap:6px;background:var(--primary-50);border-radius:16px;padding:14px">
+        <div class="between t-small"><span>Already spent</span><b style="color:var(--ink)">${money(p.totalSpent)}</b></div>
+        <div class="between t-small"><span>Still to save (${savePct}%)</span><b style="color:var(--ink)">${money(p.toSave)}${p.saved ? ` <span class="t-small pos">· ${money(p.saved, true)} saved</span>` : ''}</b></div>
+        <div class="between" style="border-top:1px solid #DCD7FB;padding-top:8px"><span class="t-strong">Left to spend</span><b class="${p.pool < 0 ? 'neg' : ''}" style="font-size:16px">${money(p.pool)}</b></div>
+        <span class="t-small">${p.daysLeft} day${p.daysLeft === 1 ? '' : 's'} left · about ${money(left / p.daysLeft, true)} a day</span>
+      </div>
+      <p class="t-small" style="margin:0;color:${p.status === 'ok' ? 'var(--pos)' : p.status === 'over' ? 'var(--neg)' : '#8A5A00'}">${msg}</p>
+      ${p.rows.length ? `<div class="list-card">${p.rows.map((x) => {
+        const c = CATEGORIES[x.cat];
+        return `<div class="tx" style="align-items:center">${catTile(x.cat)}
+          <div class="meta" style="gap:2px;min-width:0"><span class="name ellipsis">${esc(c.label)}</span>
+            <span class="t-small">${money(x.spent, true)} spent${x.usual ? ` · usually ${money(x.usual, true)}` : ''}</span>
+            ${x.full ? '<span class="t-small" style="color:var(--neg)">No more this month: limit = what you’ve spent</span>' : ''}
+            ${x.due.length ? `<span class="t-small" style="color:#8A5A00">Still to pay: ${esc(x.due.slice(0, 2).join(', '))}${x.due.length > 2 ? '…' : ''}</span>` : ''}
+            <span class="t-small">${x.current ? `Now ${money(x.current, true)}` : 'No limit yet'}${x.current && x.suggest !== x.current ? ` → <b class="${x.suggest > x.current ? 'pos' : 'neg'}">${x.suggest > x.current ? '▲' : '▼'} ${money(Math.abs(x.suggest - x.current), true)}</b>` : ''}</span></div>
+          <span class="amount-input" style="width:132px;flex-shrink:0;padding:6px 8px;gap:4px"><b style="font-size:12px">Rp</b><input name="b_${x.cat}" inputmode="numeric" data-money value="${groupDigits(x.suggest)}" aria-label="${esc(c.label)} limit" style="font-size:14px;min-width:0;width:100%"></span>
+        </div>`;
+      }).join('')}</div>` : '<p class="empty">No spending yet to plan from. Add a few expenses first.</p>'}
+      ${p.rows.length ? `<p class="t-small" style="margin:-6px 0 0">You can change any number before applying. Set 0 to remove a limit.</p>
+      <button type="submit" class="btn primary">Apply these limits</button>` : ''}
+    </form>`, applyAssistant);
+  const inp = $('#ast-money');
+  if (inp) inp.addEventListener('change', () => { astMoney = parseAmount(inp.value) || 0; assistantSheet(); });
+}
+function applyAssistant() {
+  const f = $('#ast-form');
+  let n = 0;
+  for (const el of f.querySelectorAll('input[name^="b_"]')) {
+    const cat = el.name.slice(2), v = Math.round(parseAmount(el.value) || 0);
+    if (v > 0) { state.budgets[cat] = v; n++; } else delete state.budgets[cat];
+  }
+  state.budgetsU = stamp();
+  astMoney = null;
+  closeSheet();
+  commit(`${n} budget${n === 1 ? '' : 's'} updated`);
 }
 
 /* ---------- Goal sheets ---------- */
@@ -1739,6 +1870,8 @@ const ACTIONS = {
   'set-asset': (el) => { state.prefs.asset = el.dataset.value; commit(); },
   'set-monthly': (el) => { state.prefs.monthly = Number(el.dataset.value); commit(); },
   'add-budget': () => budgetSheet(),
+  'budget-assistant': () => { astMoney = null; assistantSheet(); },
+  'ast-save': (el) => { const v = $('#ast-money'); if (v) astMoney = parseAmount(v.value) || 0; state.prefs.savePct = Number(el.dataset.value); save(state); assistantSheet(); },
   'edit-budget': (el) => budgetSheet(el.dataset.id),
   'delete-budget': (el) => { delete state.budgets[el.dataset.id]; state.budgetsU = stamp(); closeSheet(); commit('Budget removed'); },
   'add-goal': () => { newGoalIcon = 'goal'; newGoalSheet(); },

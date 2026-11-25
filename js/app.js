@@ -75,8 +75,53 @@ function pocketBalance(id) {
   return bal;
 }
 const balance = () => (state.openingBalance || 0) + pockets().reduce((s, p) => s + pocketBalance(p.id), 0);
-const POCKET_KINDS = { bank: { label: 'Bank', long: 'Bank account', icon: 'bank' }, ewallet: { label: 'E-wallet', long: 'E-wallet', icon: 'wallet' }, cash: { label: 'Cash', long: 'Cash', icon: 'cash' } };
+const POCKET_KINDS = { bank: { label: 'Bank', long: 'Bank account', icon: 'bank' }, ewallet: { label: 'E-wallet', long: 'E-wallet', icon: 'wallet' }, cash: { label: 'Cash', long: 'Cash', icon: 'cash' }, savings: { label: 'Savings', long: 'Savings account', icon: 'piggy' } };
 const kindOf = (p) => POCKET_KINDS[p?.kind] || POCKET_KINDS.bank;
+/* ---------- Savings: money moved into Savings pockets ---------- */
+const savingPockets = () => pockets().filter((p) => p.kind === 'savings');
+const isSavingId = (id) => pocketById(id)?.kind === 'savings';
+/** Net amount moved into savings pockets in a cycle (offset 0 = this month, -1 = last month). */
+function savedIn(offset = 0) {
+  const r = offset ? cycleRange(now(), offset) : currentCycle();
+  let net = 0;
+  for (const t of state.transactions) {
+    if (t.type !== 'transfer' || t.date < r.startIso || t.date > r.endIso) continue;
+    const into = isSavingId(t.toAccount), from = isSavingId(pocketOf(t));
+    if (into && !from) net += t.amount;
+    else if (from && !into) net -= t.amount;
+  }
+  return net;
+}
+function savingsCard(income) {
+  const sp = savingPockets();
+  if (!sp.length) return `
+      <button type="button" class="tile-btn" data-action="add-savings-pocket" style="width:100%;background:#E3F6EC;border:0">
+        <span class="row" style="gap:12px"><span class="cat" style="background:#fff;color:#17834F">${svg('piggy')}</span>
+          <span class="stack" style="gap:0"><span class="t-strong">Track your savings</span><span class="t-small">Add your savings account as a pocket. Money you move there counts as saved, not spent.</span></span></span>
+        ${svg('chev', 'class="chev"')}
+      </button>`;
+  const saved = savedIn(0), last = savedIn(-1);
+  const total = sp.reduce((a, p) => a + pocketBalance(p.id), 0);
+  const target = Math.round(income * 0.2);
+  const share = income ? Math.round((Math.max(0, saved) / income) * 100) : 0;
+  const diff = saved - last;
+  return `
+      <section class="card lg stack" aria-label="Saved this month" style="gap:12px">
+        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Saved this month</span><span class="t-small">${cycleLabel()}</span></span>
+          <span class="cat" style="background:#E3F6EC;color:#17834F">${svg('piggy')}</span></div>
+        <div class="between" style="align-items:flex-end">
+          <span class="t-stat" style="color:${saved < 0 ? 'var(--neg)' : 'var(--pos)'}">${saved < 0 ? '−' : ''}${money(Math.abs(saved))}</span>
+          ${income ? `<span class="t-label">${share}% of income</span>` : ''}
+        </div>
+        ${income ? `${bar(pct(Math.max(0, saved), target), '#1FAA6B')}
+        <span class="t-small">${saved >= target ? `You reached the 20% target of ${money(target, true)}. Nice!` : `${money(target - Math.max(0, saved), true)} more to reach 20% of income (${money(target, true)})`}</span>` : '<span class="t-small">Add your income to see how much of it you save.</span>'}
+        <div class="between t-small" style="border-top:1px solid var(--line);padding-top:10px;flex-wrap:wrap;gap:4px 12px">
+          <span style="white-space:nowrap">Last month: <b style="color:var(--ink)">${money(last, true)}</b>${last || saved ? ` <span class="${diff >= 0 ? 'pos' : 'neg'}">(${diff >= 0 ? '+' : '−'}${money(Math.abs(diff), true)})</span>` : ''}</span>
+          <span style="white-space:nowrap">In savings: <b style="color:var(--ink)">${money(total, true)}</b></span>
+        </div>
+        <button type="button" class="btn primary" data-action="save-money" style="background:#1FAA6B">+ Save money</button>
+      </section>`;
+}
 const pocketIcon = (p, size = 40) => `<span class="pocket-icon" style="width:${size}px;height:${size}px;background:${p.color || '#5B4CF0'}">${svg(kindOf(p).icon)}</span>`;
 // A goal can follow its pocket's balance, or keep its own saved amount
 const goalTracksPocket = (g) => g.track === 'pocket' && !!pocketById(g.pocket);
@@ -420,7 +465,7 @@ const PAGES = {
         <div class="stack" style="gap:4px">
           <span class="t-label">Total balance</span>
           <span class="t-display" style="font-size:34px">${money(balance())}</span>
-          <span class="t-small">${cycleLabel()} · ${m.net >= 0 ? 'saved' : 'overspent'} ${money(Math.abs(m.net), true)}</span>
+          <span class="t-small">${cycleLabel()} · ${m.net >= 0 ? 'left over' : 'overspent'} ${money(Math.abs(m.net), true)}</span>
         </div>
         <div class="grid-2" style="gap:10px">
           <div class="glass"><span class="t-small row" style="gap:6px">${svg('up', 'style="width:14px;height:14px;fill:none;stroke:#C8F7D9;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"')}Income</span><b style="font-size:16px">${money(m.income)}</b></div>
@@ -441,6 +486,8 @@ const PAGES = {
           <span class="t-small" style="color:var(--primary);font-weight:600">Add pocket</span>
         </button>
       </div>
+
+      ${savingsCard(m.income)}
 
       <section class="card lg stack" aria-label="Spent this month" style="gap:12px;overflow:hidden">
         <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><a class="see-all" href="#/plan/budgets">Budgets</a></div>
@@ -812,13 +859,14 @@ function appbarHtml(page) {
         ? `<span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1>`
         : `<span class="hello">Welcome to</span><h1>Jon Pocket</h1>`}</div>
       <div class="appbar-action">
+        <button type="button" class="icon-btn" data-action="refresh-app" aria-label="Refresh">${svg('reset')}</button>
         <button type="button" class="icon-btn" data-action="toggle-hide" aria-label="${state.prefs.hide ? 'Show' : 'Hide'} amounts">${svg(state.prefs.hide ? 'eyeOff' : 'eye')}</button>
         ${actionButton('bell')}
       </div>`;
   }
   return `
     <div class="appbar-title"><h1>${esc(page.title)}</h1></div>
-    <div class="appbar-action">${actionButton(page.action)}</div>`;
+    <div class="appbar-action"><button type="button" class="icon-btn" data-action="refresh-app" aria-label="Refresh">${svg('reset')}</button>${actionButton(page.action)}</div>`;
 }
 
 /* =========================================================
@@ -1161,12 +1209,12 @@ function drawPocketForm(balanceText, nameText) {
   const d = pocketDraft;
   setSheet(d.id ? `Edit ${d.name}` : 'Add pocket', `
     <form id="pocket-form" class="stack" style="gap:16px" novalidate>
-      <label class="field"><span>Name</span><input class="input" name="name" maxlength="30" placeholder="${d.kind === 'cash' ? 'e.g. Cash, Wallet' : d.kind === 'ewallet' ? 'e.g. Dana, ShopeePay' : 'e.g. Mandiri, BRI'}" value="${esc(nameText ?? d.name)}" required></label>
-      ${seg([['bank', 'Bank'], ['ewallet', 'E-wallet'], ['cash', 'Cash']], 'pocket-kind', d.kind)}
+      <label class="field"><span>Name</span><input class="input" name="name" maxlength="30" placeholder="${d.kind === 'cash' ? 'e.g. Cash, Wallet' : d.kind === 'ewallet' ? 'e.g. Dana, ShopeePay' : d.kind === 'savings' ? 'e.g. Tabungan, Jago Saku' : 'e.g. Mandiri, BRI'}" value="${esc(nameText ?? d.name)}" required></label>
+      ${seg([['bank', 'Bank'], ['ewallet', 'E-wallet'], ['cash', 'Cash'], ['savings', 'Savings']], 'pocket-kind', d.kind)}
       <label class="field"><span>Current balance</span>
         <span class="amount-input"><b>Rp</b><input name="balance" inputmode="numeric" placeholder="0" data-money value="${esc(balanceText)}"></span>
       </label>
-      <p class="t-small" style="margin-top:-8px">${d.kind === 'cash' ? 'Count the cash you have right now.' : `Type what the ${d.kind === 'ewallet' ? 'e-wallet' : 'bank'} app shows right now.`} Jon Pocket keeps it up to date as you add transactions.</p>
+      <p class="t-small" style="margin-top:-8px">${d.kind === 'savings' ? 'Type what your savings account holds right now. Money you move here with a transfer is saved, not spent.' : d.kind === 'cash' ? 'Count the cash you have right now.' : `Type what the ${d.kind === 'ewallet' ? 'e-wallet' : 'bank'} app shows right now.`} Jon Pocket keeps it up to date as you add transactions.</p>
       <div class="field"><span>Colour</span><div class="pills" role="group" aria-label="Colour">
         ${POCKET_COLORS.map((c) => `<button type="button" class="swatch" data-action="pocket-color" data-value="${c}" aria-pressed="${c === d.color}" aria-label="Colour ${c}" style="background:${c}"></button>`).join('')}
       </div></div>
@@ -1248,7 +1296,22 @@ function drawCategoryForm(nameText) {
         <button type="submit" class="btn primary">${d.id ? 'Save' : 'Add category'}</button>
       </div>
       ${d.id && used ? `<p class="t-small">${used} transaction${used === 1 ? ' uses' : 's use'} this category.</p>` : ''}
+      ${d.id && d.type === 'expense' && used ? savingsMoveCard(d.id, used) : ''}
     </form>`, saveCategory);
+}
+/** For a category like "Saving": turn its expenses into transfers into a savings pocket. */
+function savingsMoveCard(id, used) {
+  const saves = pockets().filter((p) => p.kind === 'savings');
+  const others = pockets().filter((p) => p.kind !== 'savings');
+  const opt = (p) => `<option value="${p.id}">${esc(p.name)}</option>`;
+  return `<div class="stack" style="gap:10px;background:#E3F6EC;border-radius:16px;padding:14px">
+      <span class="t-strong" style="color:#17834F">Is this money you save, not spend?</span>
+      <span class="t-small" style="color:var(--ink-2)">Move ${used === 1 ? 'this transaction' : `these ${used} transactions`} into a savings pocket. They become transfers, so they stop counting as spending and the money stays in your balance.</span>
+      <label class="field"><span>Savings pocket</span><select class="input" id="save-pocket">
+        ${saves.map(opt).join('')}<option value="__new">+ New pocket called “Savings”</option>${others.length ? `<optgroup label="Other pockets">${others.map(opt).join('')}</optgroup>` : ''}
+      </select></label>
+      <button type="button" class="btn primary" data-action="cat-to-savings" data-id="${id}">Move to savings</button>
+    </div>`;
 }
 function saveCategory() {
   const f = $('#cat-form');
@@ -1600,6 +1663,54 @@ const ACTIONS = {
       toast('Category deleted');
       manageCategories();
     });
+  },
+  'cat-to-savings': (el) => {
+    const id = el.dataset.id;
+    const c = CATEGORIES[id];
+    let target = $('#save-pocket')?.value || '__new';
+    const used = state.transactions.filter((t) => t.cat === id && t.type === 'expense');
+    const label = target === '__new' ? 'a new Savings pocket' : pocketName(target);
+    askConfirm(`Move ${c.label} to savings?`, `${used.length} transaction${used.length === 1 ? '' : 's'} will become transfers into ${label}, so ${used.length === 1 ? 'it no longer counts' : 'they no longer count'} as spending. The ${c.label} category will be removed. From now on, save with + → Transfer.`, 'Move to savings', () => {
+      const t0 = stamp();
+      if (target === '__new') {
+        target = uid();
+        if (!state.accounts) state.accounts = [];
+        state.accounts.push({ id: target, name: 'Savings', kind: 'savings', color: '#1FAA6B', opening: 0, u: t0 });
+      }
+      let moved = 0;
+      for (const t of used) {
+        const from = pocketOf(t);
+        if (from === target) { t.cat = 'other'; t.u = t0; continue; } // was spent from the savings pocket itself
+        Object.assign(t, { type: 'transfer', cat: 'transfer', account: from, toAccount: target, method: 'Transfer', u: t0 });
+        delete t.recurring;
+        moved++;
+      }
+      if (state.budgets[id] !== undefined) { delete state.budgets[id]; state.budgetsU = t0; }
+      state.categories = state.categories.filter((x) => x.id !== id);
+      state.deleted[id] = t0;
+      if (state.prefs.catFilter === id) state.prefs.catFilter = 'all';
+      setCustomCategories(state.categories);
+      closeSheet();
+      commit(`${moved} moved to ${pocketName(target)}`);
+    });
+  },
+  'save-money': () => {
+    const to = savingPockets()[0];
+    if (!to) { pocketForm(null); pocketDraft.kind = 'savings'; pocketDraft.name = 'Savings'; drawPocketForm('', 'Savings'); return; }
+    txSheet();
+    txDraft.type = 'transfer'; txDraft.toAccount = to.id;
+    txDraft.account = (pockets().find((p) => p.kind !== 'savings' && p.id === newTxPocket()) || pockets().find((p) => p.kind !== 'savings') || {}).id || '';
+    txDraft.name = 'Saving';
+    drawTxSheet();
+  },
+  'add-savings-pocket': () => { pocketForm(null); pocketDraft.kind = 'savings'; pocketDraft.color = '#1FAA6B'; drawPocketForm('', 'Savings'); },
+  'refresh-app': async (el) => {
+    if (el.disabled) return;
+    el.disabled = true; el.classList.add('spin');
+    // Save and pull the latest data first (max 5 s), then reload to get the newest app version.
+    try { await Promise.race([syncNow(false), new Promise((r) => setTimeout(r, 5000))]); } catch (e) { /* reload anyway */ }
+    try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); } catch (e) { /* ignore */ }
+    location.reload();
   },
   'manage-pockets': managePockets,
   'open-pocket': (el) => openPocket(el.dataset.id),

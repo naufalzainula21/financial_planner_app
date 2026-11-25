@@ -88,6 +88,8 @@ svg { display: block; }
 .icon-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .icon-btn.soft { background: var(--primary-50); }
 .icon-btn.solid { background: var(--primary); color: #fff; }
+.icon-btn.spin svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .icon-btn .badge { position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 4px; background: var(--yellow); border: 2px solid var(--bg); }
 
 /* ===== Scrolling content ===== */

@@ -25,6 +25,7 @@ export function emptyState() {
     v: 2, openingBalance: 0, transactions: [], budgets: {}, goals: [], accounts: defaultPockets(), categories: [], prefs: { ...DEFAULT_PREFS },
     // sync bookkeeping: when budgets / name last changed, and ids deleted (id -> time)
     budgetsU: 0, nameU: 0, deleted: {},
+    budgetPct: {}, budgetPctCycle: '', // categories whose limit is a % of the month's money
     cycleDay: 25, cycleU: 0 // month runs from this day (payday) to the day before, next month
   };
 }
@@ -40,7 +41,7 @@ export const validGoal = (g) => !!g && typeof g.id === 'string' && typeof g.name
 /** The part of the state that is synced to the cloud. */
 export function toDoc(s) {
   return {
-    transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], categories: s.categories || [], budgets: s.budgets, budgetsU: s.budgetsU || 0,
+    transactions: s.transactions, goals: s.goals, accounts: s.accounts || [], categories: s.categories || [], budgets: s.budgets, budgetsU: s.budgetsU || 0, budgetPct: s.budgetPct || {}, budgetPctCycle: s.budgetPctCycle || '',
     deleted: s.deleted || {}, openingBalance: s.openingBalance || 0, name: s.prefs?.name || '', nameU: s.nameU || 0,
     cycleDay: s.cycleDay || 25, cycleU: s.cycleU || 0
   };
@@ -71,6 +72,8 @@ export function mergeDocs(a, b) {
     accounts: list(a.accounts, b.accounts).filter(validAccount),
     categories: list(a.categories, b.categories).filter(validCategory),
     budgets: (aB >= bB ? a.budgets : b.budgets) || {},
+    budgetPct: (aB >= bB ? a.budgetPct : b.budgetPct) || {},
+    budgetPctCycle: (aB >= bB ? a.budgetPctCycle : b.budgetPctCycle) || '',
     budgetsU: Math.max(aB, bB),
     deleted,
     openingBalance: a.openingBalance || b.openingBalance || 0,
@@ -102,6 +105,7 @@ export function load() {
           accounts: Array.isArray(s.accounts) ? s.accounts.filter(validAccount) : defaultPockets(),
           categories: Array.isArray(s.categories) ? s.categories.filter(validCategory) : [],
           budgets: s.budgets && typeof s.budgets === 'object' ? s.budgets : {},
+          budgetPct: s.budgetPct && typeof s.budgetPct === 'object' ? s.budgetPct : {},
           deleted: s.deleted && typeof s.deleted === 'object' ? s.deleted : {},
           prefs: { ...DEFAULT_PREFS, ...s.prefs }
         };

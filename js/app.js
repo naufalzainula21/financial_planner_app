@@ -46,11 +46,15 @@ function currentCycle() {
 const inMonth = (t) => { const r = currentCycle(); return t.date >= r.startIso && t.date <= r.endIso; };
 const toDate = (iso) => new Date(iso + 'T00:00:00');
 
+/* Saving is not spending: an expense in your own "Saving"/"Tabungan"/"Invest" category counts as saved. */
+const SAVING_WORDS = /(sav(e|ing|ings)?\b|tabung|nabung|simpan|invest)/i;
+const isSavingCat = (cat) => { const c = CATEGORIES[cat]; return !!c && c.type === 'expense' && !!c.custom && SAVING_WORDS.test(c.label); };
+const isSpend = (t) => t.type === 'expense' && !isSavingCat(t.cat);
 function totals(list) {
   let income = 0, expense = 0;
   for (const t of list) {
     if (t.type === 'income') income += t.amount;
-    else if (t.type === 'expense') expense += t.amount; // transfers between pockets are neither
+    else if (isSpend(t)) expense += t.amount; // transfers between pockets and saving are neither
   }
   return { income, expense, net: income - expense };
 }
@@ -78,14 +82,16 @@ const balance = () => (state.openingBalance || 0) + pockets().reduce((s, p) => s
 const POCKET_KINDS = { bank: { label: 'Bank', long: 'Bank account', icon: 'bank' }, ewallet: { label: 'E-wallet', long: 'E-wallet', icon: 'wallet' }, cash: { label: 'Cash', long: 'Cash', icon: 'cash' }, savings: { label: 'Savings', long: 'Savings account', icon: 'piggy' } };
 const kindOf = (p) => POCKET_KINDS[p?.kind] || POCKET_KINDS.bank;
 /* ---------- Savings: money moved into Savings pockets ---------- */
-const savingPockets = () => pockets().filter((p) => p.kind === 'savings');
-const isSavingId = (id) => pocketById(id)?.kind === 'savings';
+const isSavingId = (id) => pocketById(id)?.kind === 'savings' || state.goals.some((g) => g.pocket && g.pocket === id);
+const savingPockets = () => pockets().filter((p) => isSavingId(p.id));
 /** Net amount moved into savings pockets in a cycle (offset 0 = this month, -1 = last month). */
 function savedIn(offset = 0) {
   const r = offset ? cycleRange(now(), offset) : currentCycle();
   let net = 0;
   for (const t of state.transactions) {
-    if (t.type !== 'transfer' || t.date < r.startIso || t.date > r.endIso) continue;
+    if (t.date < r.startIso || t.date > r.endIso) continue;
+    if (t.type === 'expense' && isSavingCat(t.cat)) { net += t.amount; continue; }
+    if (t.type !== 'transfer') continue;
     const into = isSavingId(t.toAccount), from = isSavingId(pocketOf(t));
     if (into && !from) net += t.amount;
     else if (from && !into) net -= t.amount;
@@ -94,7 +100,8 @@ function savedIn(offset = 0) {
 }
 function savingsCard(income) {
   const sp = savingPockets();
-  if (!sp.length) return `
+  const catSaving = state.transactions.some((t) => t.type === 'expense' && isSavingCat(t.cat));
+  if (!sp.length && !catSaving) return `
       <button type="button" class="tile-btn" data-action="add-savings-pocket" style="width:100%;background:#E3F6EC;border:0">
         <span class="row" style="gap:12px"><span class="cat" style="background:#fff;color:#17834F">${svg('piggy')}</span>
           <span class="stack" style="gap:0"><span class="t-strong">Track your savings</span><span class="t-small">Add your savings account as a pocket. Money you move there counts as saved, not spent.</span></span></span>
@@ -131,7 +138,7 @@ const goalPocketLine = (g) => (pocketById(g.pocket) ? `${goalTracksPocket(g) ? '
 
 function spentByCat(list) {
   const m = {};
-  for (const t of list) if (t.type === 'expense') m[t.cat] = (m[t.cat] || 0) + t.amount;
+  for (const t of list) if (isSpend(t)) m[t.cat] = (m[t.cat] || 0) + t.amount;
   return m;
 }
 function daysLeftInMonth() {
@@ -287,7 +294,7 @@ function paceSlide(b, noBudget) {
   const days = Math.round((r.end - r.start) / DAY) + 1;
   const todayIdx = Math.min(days - 1, Math.round((toDate(isoDate(now())) - r.start) / DAY));
   const daily = new Array(days).fill(0);
-  for (const t of monthTx()) if (t.type === 'expense') {
+  for (const t of monthTx()) if (isSpend(t)) {
     const i = Math.round((toDate(t.date) - r.start) / DAY);
     if (i >= 0 && i < days) daily[i] += t.amount;
   }
@@ -354,7 +361,7 @@ function categorySlide() {
     off += len;
     return a;
   }).join('');
-  const biggest = monthTx().filter((t) => t.type === 'expense').sort((a, z) => z.amount - a.amount)[0];
+  const biggest = monthTx().filter(isSpend).sort((a, z) => z.amount - a.amount)[0];
   return `
     <div class="row" style="gap:16px;align-items:center">
       <svg viewBox="0 0 120 120" class="donut" role="img" aria-label="Spending by category">
@@ -551,7 +558,7 @@ const PAGES = {
     const period = state.prefs.period;
     const d = now();
     let values = [], labels = [], from, to = d, rangeLabel = '';
-    const exp = (a, b) => state.transactions.filter((t) => t.type === 'expense' && toDate(t.date) >= a && toDate(t.date) <= b).reduce((s, t) => s + t.amount, 0);
+    const exp = (a, b) => state.transactions.filter((t) => isSpend(t) && toDate(t.date) >= a && toDate(t.date) <= b).reduce((s, t) => s + t.amount, 0);
     const today0 = toDate(isoDate(d));
     if (period === 'weekly') {
       from = new Date(today0 - 6 * DAY);
@@ -1051,7 +1058,7 @@ let astMoney = null; // money for this month typed in the assistant (null = use 
 const round5k = (n) => Math.max(0, Math.ceil(n / 5000) * 5000);
 function expenseByCat(r) {
   const m = {};
-  for (const t of state.transactions) if (t.type === 'expense' && t.date >= r.startIso && t.date <= r.endIso) m[t.cat] = (m[t.cat] || 0) + t.amount;
+  for (const t of state.transactions) if (isSpend(t) && t.date >= r.startIso && t.date <= r.endIso) m[t.cat] = (m[t.cat] || 0) + t.amount;
   return m;
 }
 function assistantPlan(money, savePct) {
@@ -1072,7 +1079,7 @@ function assistantPlan(money, savePct) {
   // Recurring bills not paid yet this month: keep their money aside
   const reserve = {}, dueNames = {};
   const paidNames = new Set(monthTx().filter((t) => t.type === 'expense').map((t) => t.name.trim().toLowerCase()));
-  for (const t of latestByName(state.transactions.filter((x) => x.type === 'expense' && isRecurring(x)))) {
+  for (const t of latestByName(state.transactions.filter((x) => isSpend(x) && isRecurring(x)))) {
     if (paidNames.has(t.name.trim().toLowerCase())) continue;
     reserve[t.cat] = (reserve[t.cat] || 0) + t.amount;
     (dueNames[t.cat] = dueNames[t.cat] || []).push(t.name);
@@ -1080,7 +1087,7 @@ function assistantPlan(money, savePct) {
   const totalDays = Math.round((r.end - r.start) / DAY) + 1;
   const elapsed = Math.max(0.25, (totalDays - daysLeftInMonth() + 1) / totalDays);
   const cats = [...new Set([...Object.keys(state.budgets), ...Object.keys(spent), ...Object.keys(hist), ...Object.keys(reserve)])]
-    .filter((c) => CATEGORIES[c] && CATEGORIES[c].type === 'expense');
+    .filter((c) => CATEGORIES[c] && CATEGORIES[c].type === 'expense' && !isSavingCat(c));
   const need = {};
   for (const c of cats) {
     const usual = hist[c] || state.budgets[c] || (spent[c] || 0) / elapsed;
@@ -1090,7 +1097,7 @@ function assistantPlan(money, savePct) {
   const isNeed = (c) => CATEGORIES[c]?.group === 'needs';
   const sum = (f) => cats.filter(f).reduce((a, c) => a + need[c], 0);
   const needsN = sum(isNeed), wantsN = sum((c) => !isNeed(c));
-  const pool = money - toSave - totalSpent;
+  const pool = money - saved - toSave - totalSpent; // money already saved is gone from spending money too
   const free = pool - reserved; // bills still to pay always keep their money
   const alloc = {};
   let status, extra = 0;
@@ -1137,10 +1144,13 @@ function assistantSheet() {
       <div class="field"><span>Save this month</span>${seg([['0', '0%'], ['10', '10%'], ['20', '20%'], ['30', '30%']], 'ast-save', String(savePct))}</div>
       <div class="stack" style="gap:6px;background:var(--primary-50);border-radius:16px;padding:14px">
         <div class="between t-small"><span>Already spent</span><b style="color:var(--ink)">${money(p.totalSpent)}</b></div>
-        <div class="between t-small"><span>Still to save (${savePct}%)</span><b style="color:var(--ink)">${money(p.toSave)}${p.saved ? ` <span class="t-small pos">· ${money(p.saved, true)} saved</span>` : ''}</b></div>
+        <div class="between t-small"><span>Saving target (${savePct}%)</span><b style="color:var(--ink)">${money(Math.round(money_ * savePct / 100))}</b></div>
+        <div class="between t-small"><span>Saved so far this month</span><b class="pos">${money(p.saved)}</b></div>
+        <div class="between t-small"><span>Still to save</span><b style="color:var(--ink)">${p.toSave ? money(p.toSave) : '<span class="pos">Done ✓</span>'}</b></div>
         <div class="between" style="border-top:1px solid #DCD7FB;padding-top:8px"><span class="t-strong">Left to spend</span><b class="${p.pool < 0 ? 'neg' : ''}" style="font-size:16px">${money(p.pool)}</b></div>
         <span class="t-small">${p.daysLeft} day${p.daysLeft === 1 ? '' : 's'} left · about ${money(left / p.daysLeft, true)} a day</span>
       </div>
+      ${!savingPockets().length ? `<button type="button" class="tile-btn" data-action="manage-pockets" style="background:#E3F6EC;border:0"><span class="stack" style="gap:0"><span class="t-strong">Saving into Jago or another account?</span><span class="t-small">Open Pockets → Edit and choose <b>Savings</b>, so money you move there counts as saved.</span></span>${svg('chev', 'class="chev"')}</button>` : ''}
       <p class="t-small" style="margin:0;color:${p.status === 'ok' ? 'var(--pos)' : p.status === 'over' ? 'var(--neg)' : '#8A5A00'}">${msg}</p>
       ${p.rows.length ? `<div class="list-card">${p.rows.map((x) => {
         const c = CATEGORIES[x.cat];

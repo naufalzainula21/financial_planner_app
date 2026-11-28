@@ -1,6 +1,13 @@
 // Category definitions and line icons (same set as the design prototype).
 
 const P = {
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  pie: '<path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+  arrowDL: '<path d="M17 7 7 17"/><path d="M15 17H7V9"/>',
+  arrowUR: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
+  send: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  chart: '<path d="M6 20V11"/><path d="M12 20V4"/><path d="M18 20v-6"/>',
   food: '<path d="M4 3v7a3 3 0 0 0 6 0V3"/><path d="M7 3v18"/><path d="M18 3c-2 0-3.5 2-3.5 5.5S16 13 18 13v8"/>',
   transport: '<path d="M4 16l2-6.5A2 2 0 0 1 7.9 8h8.2a2 2 0 0 1 1.9 1.5L20 16v3H4z"/><path d="M7.5 19v1.5M16.5 19v1.5"/><path d="M7 13.5h.01M17 13.5h.01"/>',
   bills: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',

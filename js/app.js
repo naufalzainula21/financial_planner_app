@@ -427,6 +427,338 @@ const TX_FILTERS = [
 const txFilters = () => [...TX_FILTERS, ...(state.categories || []).filter((c) => CATEGORIES[c.id]).map((c) => [c.id, CATEGORIES[c.id].short, CATEGORIES[c.id].icon]), ['other', 'Other', 'other']];
 const isRecurring = (t) => !!t.recurring || t.method === 'Recurring';
 
+/* ---------- Home pieces (clean finance look) ---------- */
+/** Big money with the last ".000" greyed, like "Rp 12.480.000" → "Rp 12.480" + ".000" */
+function moneySplit(n) {
+  const s = money(n);
+  if (state.prefs.hide) return s;
+  const i = s.lastIndexOf('.');
+  return i > 0 && s.length - i === 4 ? `${s.slice(0, i)}<span class="dim">${s.slice(i)}</span>` : s;
+}
+/** Average spending per category over the last 3 months that have data. */
+function usualByCat() {
+  const hist = {}; let months = 0;
+  for (let k = 1; k <= 3; k++) {
+    const m = expenseByCat(cycleRange(now(), -k));
+    if (!Object.keys(m).length) continue;
+    months++;
+    for (const [c, v] of Object.entries(m)) hist[c] = (hist[c] || 0) + v;
+  }
+  for (const c of Object.keys(hist)) hist[c] /= months;
+  return hist;
+}
+function cycleDays() {
+  const r = currentCycle();
+  const total = Math.round((r.end - r.start) / DAY) + 1;
+  return { total, elapsed: Math.max(1, total - daysLeftInMonth() + 1), left: daysLeftInMonth() };
+}
+/** Spending this month vs the same point last month, in %. null when there's nothing to compare. */
+function vsLastMonth() {
+  const { elapsed } = cycleDays();
+  const r = cycleRange(now(), -1);
+  const until = isoDate(new Date(r.start.getTime() + (elapsed - 1) * DAY));
+  const last = state.transactions.filter((t) => isSpend(t) && t.date >= r.startIso && t.date <= until && t.date <= r.endIso).reduce((a, t) => a + t.amount, 0);
+  if (!last) return null;
+  return ((totals(monthTx()).expense - last) / last) * 100;
+}
+function homeInsight(b) {
+  const { total, elapsed, left } = cycleDays();
+  const frac = elapsed / total;
+  const spent = spentByCat(monthTx());
+  const usual = usualByCat();
+  let best = null;
+  // Already past a usual WHOLE month? That's the clearest warning, and it doesn't exaggerate early in the month.
+  let whole = null;
+  for (const [c, v] of Object.entries(spent)) {
+    const u = usual[c] || 0;
+    if (!CATEGORIES[c] || u < 50000 || v < u * 1.15) continue;
+    if (!whole || v / u > whole.v / whole.u) whole = { c, v, u };
+  }
+  if (whole) {
+    const limit = state.budgets[whole.c];
+    return { key: `${currentCycle().startIso}:${whole.c}:month`, title: `${CATEGORIES[whole.c].label} is already ${Math.round((whole.v / whole.u - 1) * 100)}% over a usual month.`,
+      text: `${money(whole.v, true)} spent so far vs ${money(whole.u, true)} in a usual whole month${limit ? (whole.v >= limit ? ', and its budget is used up' : `, with ${money(limit - whole.v, true)} left in its budget`) : ''}. ${left} day${left === 1 ? '' : 's'} to go.` };
+  }
+  // Pace check only once a week of the month has passed, so a single early purchase doesn't look alarming.
+  for (const [c, v] of Object.entries(spent)) {
+    const typical = (usual[c] || 0) * frac;
+    if (elapsed < 7 || !CATEGORIES[c] || typical < 20000 || v < 50000) continue;
+    const ratio = v / typical;
+    if (ratio >= 1.15 && (!best || ratio > best.ratio)) best = { c, v, typical, ratio };
+  }
+  if (best) {
+    const label = CATEGORIES[best.c].label;
+    const limit = state.budgets[best.c];
+    let tail = '';
+    if (limit) {
+      const runOut = limit / (best.v / elapsed);
+      const early = Math.floor(total - runOut);
+      tail = best.v >= limit ? ' Its budget is already used up.' : early >= 1 ? ` At this pace, its budget may run out ${early} day${early === 1 ? '' : 's'} early.` : '';
+    }
+    return { key: `${currentCycle().startIso}:${best.c}`, title: `${label} is running ${Math.round((best.ratio - 1) * 100)}% above your usual pace.`, text: `${money(best.v, true)} spent vs ${money(best.typical, true)} typical by now.${tail}` };
+  }
+  if (b.total) {
+    const pace = b.used / Math.max(1, b.total * frac);
+    if (b.p >= 100) return { key: `${currentCycle().startIso}:over`, title: `You’re over budget by ${money(-b.left, true)}.`, text: `There are still ${left} day${left === 1 ? '' : 's'} to go. Adjust your limits so the rest of the month still fits.` };
+    if (pace > 1.1) return { key: `${currentCycle().startIso}:pace`, title: `Spending is ${Math.round((pace - 1) * 100)}% ahead of your budget pace.`, text: `Keep it to about ${money(Math.max(0, b.left) / left, true)} a day to stay on budget.` };
+    return { key: `${currentCycle().startIso}:ok`, title: 'You’re on track this month.', text: `${money(Math.max(0, b.left), true)} left in your budgets — about ${money(Math.max(0, b.left) / left, true)} a day for the next ${left} days.` };
+  }
+  return { key: 'nobudget', title: 'Set limits that fit your money.', text: 'The assistant looks at your income, bills and usual spending and suggests a budget for every category.' };
+}
+/** Recurring bills not paid yet this month, with their next due date. */
+function upcomingBills() {
+  const paid = new Set(monthTx().filter((t) => t.type === 'expense').map((t) => t.name.trim().toLowerCase()));
+  const today = toDate(isoDate(now()));
+  return latestByName(state.transactions.filter((t) => isSpend(t) && isRecurring(t)))
+    .filter((t) => !paid.has(t.name.trim().toLowerCase()))
+    .map((t) => {
+      const d = toDate(t.date);
+      const due = new Date(d.getFullYear(), d.getMonth() + 1, d.getDate());
+      return { t, due, days: Math.round((due - today) / DAY) };
+    })
+    .sort((a, b) => a.due - b.due);
+}
+function safeToSpend(m, b) {
+  const savePct = state.prefs.savePct ?? 20;
+  const limit = b.total || (m.income ? m.income * (1 - savePct / 100) : 0);
+  if (!limit) return '';
+  const used = b.total ? b.used : m.expense;
+  const p = Math.min(100, (used / limit) * 100);
+  const over = used > limit;
+  const n = 12;
+  return `
+    <section class="card stack" aria-label="Safe to spend" style="gap:12px">
+      <div class="between"><b style="font-size:14px">Safe to spend this month</b><span class="t-small">${daysLeftInMonth()} days left</span></div>
+      <div class="dots-track${over ? ' over' : ''}" role="img" aria-label="${Math.round((used / limit) * 100)}% used">
+        <span class="fill" style="width:calc(${Math.max(p, 8)}% - 8px)"></span>
+        ${Array.from({ length: n }, (_, i) => `<i class="${(i + 0.5) / n * 100 < p ? 'on' : ''}"></i>`).join('')}
+        <span class="knob" style="left:calc(${Math.max(p, 8)}% - 10px)"></span>
+      </div>
+      <div class="between t-small"><span>${money(used)} spent of ${money(limit)}</span><b style="color:${over ? 'var(--neg)' : 'var(--ink)'}">${Math.round((used / limit) * 100)}% used</b></div>
+    </section>`;
+}
+function upcomingCard() {
+  const items = upcomingBills();
+  if (!items.length) return '';
+  const due = (x) => x.days < 0 ? `<small style="color:var(--neg);font-weight:600">Overdue</small>` : x.days === 0 ? `<small style="color:var(--neg);font-weight:600">Due today</small>` : x.days <= 3 ? `<small style="color:var(--neg)">In ${x.days} day${x.days === 1 ? '' : 's'}</small>` : `<small class="t-small">Scheduled</small>`;
+  return `
+    <section class="group" aria-label="Upcoming">
+      <div class="head"><b>Upcoming</b><span>${items.length} this month</span></div>
+      ${items.slice(0, 4).map((x) => `
+        <button type="button" class="row-card" data-action="edit-tx" data-id="${x.t.id}">
+          ${catTile(x.t.cat)}
+          <span class="grow"><span class="nm">${esc(x.t.name)}</span><span class="sb">Due ${fmtDM(x.due)} · ${esc(pocketName(pocketOf(x.t)))}</span></span>
+          <span class="rt"><b>${money(x.t.amount)}</b>${due(x)}</span>
+        </button>`).join('')}
+      ${items.length > 4 ? `<button type="button" class="see-all" data-action="payments" style="align-self:center">See all ${items.length}</button>` : ''}
+    </section>`;
+}
+/** One transaction as a white row card (Home recent + Transactions list). */
+function txCard(t, { open = false, showDate = false, expandable = false } = {}) {
+  const isT = t.type === 'transfer';
+  const c = CATEGORIES[t.cat] || CATEGORIES.other;
+  const amt = state.prefs.hide ? '••••' : isT ? idr(t.amount) : idrSigned(t.type === 'income' ? t.amount : -t.amount);
+  const sub = isT ? `${pocketName(pocketOf(t))} → ${pocketName(t.toAccount)}` : `${c.label} · ${pocketName(pocketOf(t))}`;
+  const row = `
+    <button type="button" class="row-card" data-action="${expandable ? 'tx-open' : 'edit-tx'}" data-id="${t.id}" aria-expanded="${expandable ? open : ''}">
+      ${catTile(isT ? 'transfer' : t.cat)}
+      <span class="grow"><span class="nm">${esc(t.name)}</span><span class="sb">${esc(sub)}${showDate ? ' · ' + esc(shortDay(t.date)) : ''}${isRecurring(t) ? ' · Recurring' : ''}</span></span>
+      <span class="rt"><b style="color:${t.type === 'income' ? 'var(--pos)' : 'var(--ink)'}">${amt}</b></span>
+    </button>`;
+  if (!open) return row;
+  return `<div class="stack" style="gap:0">${row}
+    <div class="tx-detail">
+      <div><span>Status</span><b>${isT ? 'Transfer' : isRecurring(t) ? 'Recurring' : 'One-time'}</b></div>
+      <div><span>Pocket</span><b>${esc(isT ? `${pocketName(pocketOf(t))} → ${pocketName(t.toAccount)}` : pocketName(pocketOf(t)))}</b></div>
+      <div><span>Category</span><b>${esc(isT ? 'Transfer' : c.label)}</b></div>
+      <div><span>Date</span><b>${toDate(t.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</b></div>
+      ${t.note ? `<div class="full"><span>Note</span><b style="font-weight:500">${esc(t.note)}</b></div>` : ''}
+      <button type="button" class="pill full" data-action="edit-tx" data-id="${t.id}" style="min-height:38px;width:100%">Edit transaction</button>
+    </div></div>`;
+}
+const greeting = () => { const h = now().getHours(); return h < 11 ? 'Good morning' : h < 15 ? 'Good afternoon' : h < 19 ? 'Good evening' : 'Good night'; };
+
+/* ---------- Transaction Summary ---------- */
+let openTx = null; // transaction whose details are shown
+const TX_TYPES = [['all', 'All'], ['recurring', 'Recurring'], ['income', 'Income'], ['expense', 'Expenses'], ['transfer', 'Transfers']];
+function matchesType(t, type) {
+  if (type === 'all') return true;
+  if (type === 'recurring') return t.type !== 'transfer' && isRecurring(t);
+  return t.type === type;
+}
+function sumRange(fromIso, toIso, type) {
+  let n = 0;
+  for (const t of state.transactions) if (t.date >= fromIso && t.date <= toIso && (type === 'expense' ? isSpend(t) : t.type === type)) n += t.amount;
+  return n;
+}
+/** Totals for this week / this month, the one before, and dot-chart columns. */
+function txSummary(period) {
+  const today = toDate(isoDate(now()));
+  const iso = (d) => isoDate(d);
+  const add = (d, n) => new Date(d.getTime() + n * DAY);
+  let cur, prev, cols = [], curLabel, prevLabel, change;
+  if (period === 'weekly') {
+    cur = { from: add(today, -6), to: today };
+    prev = { from: add(today, -13), to: add(today, -7) };
+    for (let i = 13; i >= 0; i--) { const d = add(today, -i); cols.push({ v: sumRange(iso(d), iso(d), 'expense'), cur: i < 7 }); }
+    curLabel = 'This week'; prevLabel = 'Last week';
+  } else {
+    const r = currentCycle(), p = cycleRange(now(), -1);
+    cur = { from: r.start, to: r.end };
+    prev = { from: p.start, to: p.end };
+    const buckets = (from, to, isCur) => {
+      const days = Math.round((to - from) / DAY) + 1, size = days / 10;
+      for (let i = 0; i < 10; i++) {
+        const a = add(from, Math.round(i * size)), b = add(from, Math.round((i + 1) * size) - 1);
+        cols.push({ v: a > today ? 0 : sumRange(iso(a), iso(b), 'expense'), cur: isCur, future: a > today });
+      }
+    };
+    buckets(prev.from, prev.to, false); buckets(cur.from, cur.to, true);
+    const mon = (d) => d.toLocaleDateString('en-GB', { month: 'short' });
+    curLabel = mon(cur.from); prevLabel = mon(prev.from);
+  }
+  const spent = sumRange(iso(cur.from), iso(cur.to), 'expense');
+  const prevSpent = sumRange(iso(prev.from), iso(prev.to), 'expense');
+  change = period === 'weekly' ? (prevSpent ? ((spent - prevSpent) / prevSpent) * 100 : null) : vsLastMonth();
+  return {
+    spent, prevSpent, change, cols, curLabel, prevLabel,
+    income: sumRange(iso(cur.from), iso(cur.to), 'income'),
+    sub: period === 'weekly' ? 'This week' : 'This month'
+  };
+}
+function dotChart(cols) {
+  const rows = 10, max = Math.max(1, ...cols.map((c) => c.v));
+  return `<div class="dotchart" role="img" aria-label="Spending over time">${cols.map((c) => {
+    const on = c.v > 0 ? Math.max(1, Math.round((c.v / max) * rows)) : 0;
+    return `<span class="col ${c.cur ? 'cur' : 'prev'}">${Array.from({ length: rows }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</span>`;
+  }).join('')}</div>`;
+}
+function txFiltersCount() {
+  return (pocketById(state.prefs.pocketFilter) ? 1 : 0) + (state.prefs.catFilter && !['all', 'income', 'recurring'].includes(state.prefs.catFilter) ? 1 : 0);
+}
+function activityList() {
+  const q = activitySearch.trim().toLowerCase();
+  const type = state.prefs.txType || 'all';
+  const cf = state.prefs.catFilter && !['all', 'income', 'recurring'].includes(state.prefs.catFilter) ? state.prefs.catFilter : 'all';
+  const list = sortedTx(state.transactions).filter((t) => matchesPocket(t) && matchesType(t, type) && (cf === 'all' || t.cat === cf) &&
+    (!q || t.name.toLowerCase().includes(q) || (CATEGORIES[t.cat]?.label || '').toLowerCase().includes(q) || (t.note || '').toLowerCase().includes(q)));
+  if (!list.length) return `<p class="empty">${q || type !== 'all' || txFiltersCount() ? 'No transactions match.' : 'Nothing here yet. Tap + to add a transaction.'}</p>`;
+  const groups = [];
+  for (const t of list.slice(0, 300)) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === t.date) last.items.push(t); else groups.push({ date: t.date, items: [t] });
+  }
+  return groups.map((g) => {
+    const label = shortDay(g.date);
+    const pretty = toDate(g.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    const net = g.items.reduce((a, t) => a + (t.type === 'income' ? t.amount : isSpend(t) ? -t.amount : 0), 0);
+    return `<section class="group" aria-label="${esc(pretty)}">
+      <div class="head"><b>${label === 'Today' || label === 'Yesterday' ? label : pretty}</b><span>${state.prefs.hide ? '' : net ? idrSigned(net) : ''}</span></div>
+      ${g.items.map((t) => txCard(t, { expandable: true, open: openTx === t.id })).join('')}
+    </section>`;
+  }).join('');
+}
+function txFilterSheet() {
+  const pf = pocketById(state.prefs.pocketFilter) ? state.prefs.pocketFilter : 'all';
+  const cf = state.prefs.catFilter && !['income', 'recurring'].includes(state.prefs.catFilter) ? state.prefs.catFilter : 'all';
+  const chip = (action, value, label, on) => `<button type="button" data-action="${action}" data-value="${value}" aria-pressed="${on}">${esc(label)}</button>`;
+  const body = `
+    <div class="field"><span>Pocket</span><div class="chips" style="flex-wrap:wrap;margin:0;padding:0">${chip('tx-pocket', 'all', 'All pockets', pf === 'all')}${pockets().map((p) => chip('tx-pocket', p.id, p.name, pf === p.id)).join('')}</div></div>
+    <div class="field"><span>Category</span><div class="chips" style="flex-wrap:wrap;margin:0;padding:0">${chip('tx-cat', 'all', 'All categories', cf === 'all')}${[...catsOf('expense'), ...catsOf('income')].map((id) => chip('tx-cat', id, CATEGORIES[id].label, cf === id)).join('')}</div></div>
+    <div class="row" style="gap:10px"><button type="button" class="btn" style="background:var(--chip);color:var(--ink);flex:1" data-action="tx-clear-filters">Clear</button><button type="button" class="btn primary" style="flex:1" data-action="close-sheet">Show results</button></div>
+    <button type="button" class="tile-btn" data-action="manage-categories"><span class="t-strong">Manage categories</span>${svg('chev', 'class="chev"')}</button>`;
+  if (sheetEl.hidden) openSheet('Filters', body);
+  else { $('#sheet-body').innerHTML = body; }
+}
+function refreshTxPage() {
+  if (currentTab !== 'activity') return;
+  const list = $('#tx-list');
+  if (list) list.innerHTML = activityList();
+  const fc = $('#tx-filter-chip');
+  if (fc) { const n = txFiltersCount(); fc.textContent = n ? `Filters (${n})` : 'Filters'; fc.setAttribute('aria-pressed', String(n > 0)); }
+}
+
+/* ---------- Assistant page: answers from your own data (no AI service, works offline) ---------- */
+let aiChat = []; // [{ me: bool, html }]
+const AI_QUESTIONS = [
+  ['today', 'chart', 'How much can I spend today?'],
+  ['where', 'pie', 'Where did my money go this month?'],
+  ['save', 'piggy', 'Am I on track with saving?'],
+  ['bills', 'calendar', 'What bills are coming up?'],
+  ['compare', 'repeat', 'How am I doing vs last month?'],
+  ['budget', 'sliders', 'Adjust my budgets for me']
+];
+function spendRoom() {
+  const m = totals(monthTx()), b = budgetSummary();
+  const savePct = state.prefs.savePct ?? 20;
+  if (b.total) return { left: b.left, from: 'your budgets', total: b.total };
+  if (m.income) return { left: m.income - Math.round(m.income * savePct / 100) - Math.max(0, savedIn(0)) - m.expense, from: `your income after saving ${savePct}%`, total: m.income };
+  return null;
+}
+function aiAnswer(intent) {
+  const m = totals(monthTx());
+  const days = daysLeftInMonth();
+  switch (intent) {
+    case 'today': {
+      const r = spendRoom();
+      if (!r) return 'Add your income or set a budget first, then I can work out a daily amount for you.';
+      if (r.left <= 0) return `You’ve already used everything from ${r.from} this month — you’re <b>${money(-r.left)}</b> over. Try to keep today to essentials only.`;
+      const today = monthTx().filter((t) => isSpend(t) && t.date === isoDate(now())).reduce((a, t) => a + t.amount, 0);
+      return `You can spend about <b>${money(r.left / days)}</b> a day for the next ${days} day${days === 1 ? '' : 's'} (${money(r.left, true)} left from ${r.from}).${today ? ` You’ve spent ${money(today, true)} today so far.` : ''}`;
+    }
+    case 'where': {
+      const s = Object.entries(spentByCat(monthTx())).sort((a, b) => b[1] - a[1]);
+      if (!s.length) return 'No spending recorded this month yet.';
+      const top = s.slice(0, 3).map(([c, v]) => `<b>${esc(CATEGORIES[c]?.label || 'Other')}</b> ${money(v, true)} (${pct(v, m.expense)}%)`).join(', ');
+      const big = monthTx().filter(isSpend).sort((a, b) => b.amount - a.amount)[0];
+      return `This month you spent <b>${money(m.expense)}</b>. Most went to ${top}.${big ? ` Your biggest single expense was ${esc(big.name)} (${money(big.amount, true)}).` : ''}`;
+    }
+    case 'save': {
+      const savePct = state.prefs.savePct ?? 20;
+      const saved = Math.max(0, savedIn(0));
+      if (!m.income) return `You’ve saved <b>${money(saved)}</b> this month. Add your income so I can compare it with your ${savePct}% target.`;
+      const target = Math.round(m.income * savePct / 100);
+      if (!savingPockets().length && !saved) return `Your ${savePct}% target this month is <b>${money(target)}</b>, but I can’t see any saving yet. If you save into Jago, mark it as a <b>Savings</b> pocket so transfers there count.`;
+      return saved >= target ? `Yes! You’ve saved <b>${money(saved)}</b>, which beats your ${savePct}% target of ${money(target, true)}.`
+        : `You’ve saved <b>${money(saved)}</b> of your ${money(target, true)} target (${pct(saved, target)}%). Move <b>${money(target - saved, true)}</b> more to savings before ${fmtDM(currentCycle().end)} to hit ${savePct}%.`;
+    }
+    case 'bills': {
+      const items = upcomingBills();
+      if (!items.length) return 'No unpaid recurring bills this month. Mark rent, bills and subscriptions as recurring and I’ll remind you before they’re due.';
+      const sum = items.reduce((a, x) => a + x.t.amount, 0);
+      return `${items.length} bill${items.length === 1 ? '' : 's'} still to pay, <b>${money(sum)}</b> in total:<br>${items.slice(0, 6).map((x) => `• ${esc(x.t.name)} — ${money(x.t.amount, true)}, ${x.days < 0 ? 'overdue' : x.days === 0 ? 'due today' : `due ${fmtDM(x.due)}`}`).join('<br>')}`;
+    }
+    case 'compare': {
+      const vs = vsLastMonth();
+      if (vs === null) return 'There’s no spending from last month to compare with yet.';
+      const now_ = spentByCat(monthTx()), last = lastSamePointByCat();
+      const up = Object.keys({ ...now_, ...last }).map((c) => [c, (now_[c] || 0) - (last[c] || 0)]).sort((a, b) => b[1] - a[1])[0];
+      return `So far you’ve spent <b>${Math.abs(Math.round(vs))}% ${vs > 0 ? 'more' : 'less'}</b> than at this point last month.${up && up[1] > 0 && CATEGORIES[up[0]] ? ` The biggest increase is <b>${esc(CATEGORIES[up[0]].label)}</b> (+${money(up[1], true)}).` : ''}`;
+    }
+    case 'budget':
+      return 'Opening the budget assistant — it suggests a limit for every category from your income, bills and usual spending.';
+    default:
+      return `I can help with: ${AI_QUESTIONS.map(([, , q]) => `“${q}”`).join(', ')}.`;
+  }
+}
+function aiIntent(text) {
+  const t = text.toLowerCase();
+  const has = (...w) => w.some((x) => t.includes(x));
+  if (has('bill', 'rent', 'subscription', 'upcoming', 'due', 'tagihan')) return 'bills';
+  if (has('last month', 'compare', ' vs', 'versus', 'bulan lalu')) return 'compare';
+  if (has('save', 'saving', 'tabung', 'nabung')) return 'save';
+  if (has('budget', 'limit', 'adjust', 'anggaran')) return 'budget';
+  if (has('where', 'category', 'categories', 'money go', 'spent on', 'kemana')) return 'where';
+  if (has('today', 'spend', 'afford', 'daily', 'per day', 'hari ini')) return 'today';
+  return 'help';
+}
+function aiAsk(intent, question) {
+  aiChat.push({ me: true, html: esc(question) }, { me: false, html: aiAnswer(intent) });
+  render();
+  setTimeout(() => { const v = $('#view'); if (v) v.scrollTop = v.scrollHeight; }, 30);
+  if (intent === 'budget') setTimeout(() => openAssistant(), 350);
+}
+
 const PAGES = {
   home() {
     const m = totals(monthTx());
@@ -447,6 +779,9 @@ const PAGES = {
     ];
     const showSteps = steps.some((s) => !s.done);
 
+    const vs = vsLastMonth();
+    const ins = homeInsight(b);
+    const showIns = state.prefs.insightOff !== ins.key;
     return {
       header: 'welcome',
       html: `
@@ -494,16 +829,20 @@ const PAGES = {
         </button>
       </div>
 
-      ${savingsCard(m.income)}
+      ${showIns ? `
+      <section class="insight" aria-label="Insights" style="position:relative">
+        <span class="kicker">${svg('spark')} Insights</span>
+        <button type="button" class="close" data-action="hide-insight" data-value="${ins.key}" aria-label="Hide this insight">${svg('close')}</button>
+        <h3 style="padding-right:22px">${ins.title}</h3>
+        <p>${ins.text}</p>
+        <div class="actions"><button type="button" data-action="budget-assistant">Adjust budget</button><button type="button" data-action="go-assistant">Ask assistant</button></div>
+      </section>` : ''}
 
-      <section class="card lg stack" aria-label="Spent this month" style="gap:12px;overflow:hidden">
-        <div class="between"><span class="stack" style="gap:0"><span class="t-h3">Spent this month</span><span class="t-small">${cycleLabel()} · ${daysLeftInMonth()} day${daysLeftInMonth() === 1 ? '' : 's'} left</span></span><span class="row" style="gap:6px"><button type="button" class="pill pill-primary" data-action="budget-assistant" style="min-height:32px;padding:4px 12px">Adjust</button><a class="see-all" href="#/plan/budgets">Budgets</a></span></div>
-        <div class="between" style="align-items:flex-end">
-          <span class="t-stat">${money(m.expense)}</span>
-          ${noBudget ? '' : `<span class="t-label">${b.p}% of budget</span>`}
-        </div>
-        ${spentSlides(m, b, noBudget, budgetMsg, topBudgets)}
-      </section>
+      ${safeToSpend(m, b)}
+
+      ${upcomingCard()}
+
+      ${savingsCard(m.income)}
 
       <section class="card lg stack" aria-label="Goals" style="gap:12px">
         <div class="between"><span class="t-h3">Goals</span><a class="see-all" href="#/plan/goals">${state.goals.length ? 'See all' : ''}</a></div>
@@ -523,34 +862,73 @@ const PAGES = {
           </button>`}
       </section>
 
-      <div class="section-head"><h2>Recent</h2>${isNew ? '' : '<a class="see-all" href="#/activity">See All</a>'}</div>
-      ${recent.length ? txList(recent) : `<div class="list-card"><p class="empty">No transactions yet.<br>Tap the <b style="color:var(--primary)">+</b> button below to add your first one.</p></div>`}
+      <section class="group" aria-label="Recent">
+        <div class="head"><b>Recent</b>${isNew ? '' : '<a class="see-all" href="#/activity">See all</a>'}</div>
+        ${recent.length ? recent.map((t) => txCard(t, { showDate: true })).join('') : `<p class="empty">No transactions yet.<br>Tap the <b style="color:var(--primary)">+</b> button below to add your first one.</p>`}
+      </section>
       `
     };
   },
 
   activity() {
-    const f = state.prefs.catFilter;
+    const period = state.prefs.txPeriod || 'monthly';
+    const sum = txSummary(period);
+    const type = state.prefs.txType || 'all';
+    const ch = sum.change;
+    const n = txFiltersCount();
     return {
-      header: 'title', title: 'Transactions', action: 'data',
+      header: 'title', title: 'Transaction Summary', action: 'tx-period',
       html: `
+      <section class="summary" aria-label="Total spending">
+        <div class="between"><span class="t-small" style="color:var(--ink-2);display:flex;align-items:center">Total Spending${ch === null ? '' : `<span class="chip-change ${ch > 0 ? 'up' : 'down'}"><i>${ch > 0 ? '↗' : '↘'}</i>${ch > 0 ? '+' : '−'}${fmtPct(Math.abs(Math.round(ch * 10) / 10))}%</span>`}</span><a href="#/stats" style="font-size:13px;font-weight:600;color:var(--ink);text-decoration:none">Details</a></div>
+        <span class="total">${moneySplit(sum.spent)}</span>
+        ${dotChart(sum.cols)}
+        <div class="between t-small"><span>${sum.prevLabel} <span class="dim">${money(sum.prevSpent)}</span></span><span>${sum.curLabel} <b style="color:var(--ink)">${money(sum.spent)}</b></span></div>
+      </section>
+
+      <div class="tiles two">
+        <button type="button" class="tile blue big" data-action="tx-type" data-value="income"><span class="stack" style="gap:0"><span class="row" style="gap:6px;font-size:15px;font-weight:600">${svg('arrowDL', 'style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round"')}Income</span><span style="font-size:10px;color:var(--ink-2)">${sum.sub}</span></span><span class="val">${moneySplit(sum.income)}</span></button>
+        <button type="button" class="tile lilac big" data-action="tx-type" data-value="expense"><span class="stack" style="gap:0"><span class="row" style="gap:6px;font-size:15px;font-weight:600">${svg('arrowUR', 'style="width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round"')}Expenses</span><span style="font-size:10px;color:var(--ink-2)">${sum.sub}</span></span><span class="val">${moneySplit(sum.spent)}</span></button>
+      </div>
+
+      <div class="chips" role="group" aria-label="Filter transactions">
+        ${TX_TYPES.map(([id, label]) => `<button type="button" data-action="tx-type" data-value="${id}" aria-pressed="${id === type}">${label}</button>`).join('')}
+        <button type="button" id="tx-filter-chip" data-action="tx-filters" aria-pressed="${n > 0}">${n ? `Filters (${n})` : 'Filters'}</button>
+      </div>
+
       <div class="search-row">
         <label class="search">${svg('search')}<span class="sr-only">Search transactions</span>
           <input type="search" id="tx-search" placeholder="Search for transactions" autocomplete="off" value="${esc(activitySearch)}">
         </label>
-        <button type="button" class="icon-btn soft" data-action="data-menu" aria-label="Data options">${svg('sliders')}</button>
+        <button type="button" class="icon-btn soft" data-action="data-menu" aria-label="Import, export and data options">${svg('sliders')}</button>
       </div>
-      ${textTabs([['all', 'All pockets'], ...pockets().map((p) => [p.id, p.name])], 'pocket-filter-here', pocketById(state.prefs.pocketFilter) ? state.prefs.pocketFilter : 'all', 'Filter by pocket')}
-      <div class="cat-grid five" role="group" aria-label="Filter by category">
-        ${txFilters().map(([id, label, icon]) => `
-          <button type="button" class="cat-btn" data-action="cat-filter-here" data-value="${id}" aria-pressed="${id === f}">
-            <span class="circle">${svg(icon)}</span><span class="ellipsis" style="max-width:100%">${esc(label)}</span>
+      <div class="stack" id="tx-list" style="gap:12px">${activityList()}</div>`
+    };
+  },
+
+  assistant() {
+    const name = state.prefs.name || 'there';
+    return {
+      header: 'assistant', title: 'Assistant',
+      html: `
+      <section class="ai-hero">
+        <span class="spark">${svg('spark', 'style="width:30px;height:30px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round"')}</span>
+        <span class="hi">Hi ${esc(name)}, I’m your Jon Pocket assistant!</span>
+        <h2>Your personal<br>finance <em>assistant.</em></h2>
+      </section>
+      ${aiChat.length ? `<div class="stack" style="gap:10px" aria-live="polite">${aiChat.map((x) => `<div class="bubble ${x.me ? 'me' : 'bot'}">${x.html}</div>`).join('')}</div>` : ''}
+      <section class="group" aria-label="Suggestions">
+        <div class="head"><b>${aiChat.length ? 'Ask something else' : 'Suggestions for you'}</b>${aiChat.length ? '<button type="button" class="see-all" data-action="ai-clear">Clear chat</button>' : ''}</div>
+        ${AI_QUESTIONS.map(([id, icon, q]) => `
+          <button type="button" class="row-card" data-action="ai-ask" data-value="${id}">
+            <span class="ic">${svg(icon)}</span><span class="grow"><span class="nm" style="font-weight:500;font-size:13px;white-space:normal">${q}</span></span>${svg('chev', 'style="width:16px;height:16px;fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0"')}
           </button>`).join('')}
-        <button type="button" class="cat-btn add" data-action="manage-categories">
-          <span class="circle">${svg('plus')}</span>Add
-        </button>
-      </div>
-      <div class="stack" id="tx-list" style="gap:18px">${activityList()}</div>`
+      </section>
+      <form id="ai-form" class="askbar" style="padding:2px 0" autocomplete="off">
+        <label class="sr-only" for="ai-input">Ask about bills, budgets, or plans</label>
+        <input id="ai-input" placeholder="Ask about bills, budgets, or plans…" enterkeyhint="send">
+        <button type="submit" aria-label="Send">${svg('send')}</button>
+      </form>`
     };
   },
 
@@ -632,8 +1010,8 @@ const PAGES = {
     const tab = state.prefs.planTab;
     const inner = tab === 'goals' ? planGoals() : tab === 'portfolio' ? planPortfolio() : planBudgets();
     return {
-      header: 'title', title: tab === 'goals' ? 'Goals' : tab === 'portfolio' ? 'Portfolio' : 'Budgets',
-      action: tab === 'goals' ? 'add-goal' : tab === 'budgets' ? 'add-budget' : 'bell',
+      header: 'title', title: tab === 'goals' ? 'Goals' : tab === 'portfolio' ? 'Portfolio' : 'Budgeting',
+      action: tab === 'goals' ? 'add-goal' : tab === 'budgets' ? 'analytics' : 'bell',
       html: `${textTabs([['budgets', 'Budgets'], ['goals', 'Goals'], ['portfolio', 'Portfolio']], 'set-plan-tab', tab, 'Plan section')}${inner}`
     };
   }
@@ -670,53 +1048,83 @@ function budgetVsIncome(b) {
     </section>`;
 }
 
+const PASTELS = ['#4A9DF0', '#A9CFF7', '#2F6FBF', '#8ED0E0', '#C9C3F2', '#6FB3E8', '#D7EAFB', '#9AA9E8'];
+function pastelDonut(items, total, label) {
+  const R = 46, C = 2 * Math.PI * R;
+  let off = 0;
+  const arcs = items.map((x, i) => {
+    const len = total ? (x.v / total) * C : 0;
+    const gap = items.length > 1 ? 2 : 0;
+    const a = `<circle cx="60" cy="60" r="${R}" fill="none" stroke="${PASTELS[i % PASTELS.length]}" stroke-width="18" stroke-dasharray="${Math.max(0, len - gap).toFixed(2)} ${(C - Math.max(0, len - gap)).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 60 60)"/>`;
+    off += len;
+    return a;
+  }).join('');
+  return `<svg viewBox="0 0 120 120" style="width:132px;height:132px;flex-shrink:0" role="img" aria-label="${esc(label)}">
+    <circle cx="60" cy="60" r="${R}" fill="none" stroke="#E9EBEF" stroke-width="18"/>${arcs}
+    <text x="60" y="55" text-anchor="middle" style="font-size:7.5px;fill:#7B818B;font-family:var(--font)">Monthly Budget</text>
+    <text x="60" y="70" text-anchor="middle" style="font-size:12px;font-weight:700;fill:#0F1115;font-family:var(--font)">${state.prefs.hide ? '••••' : idrShort(total)}</text>
+  </svg>`;
+}
+/** What each category had spent at this point of last month. */
+function lastSamePointByCat() {
+  const { elapsed } = cycleDays();
+  const r = cycleRange(now(), -1);
+  const until = isoDate(new Date(r.start.getTime() + (elapsed - 1) * DAY));
+  const m = {};
+  for (const t of state.transactions) if (isSpend(t) && t.date >= r.startIso && t.date <= until && t.date <= r.endIso) m[t.cat] = (m[t.cat] || 0) + t.amount;
+  return m;
+}
 function planBudgets() {
   const b = budgetSummary();
-  const perDay = Math.max(0, b.left) / daysLeftInMonth();
+  const entries = Object.entries(state.budgets).filter(([c]) => CATEGORIES[c]).sort((x, y) => y[1] - x[1]);
+  const last = lastSamePointByCat();
   const recurring = new Set(state.transactions.filter((t) => t.type === 'expense' && isRecurring(t)).map((t) => t.name.toLowerCase())).size;
+  const items = entries.map(([c, v]) => ({ c, v }));
   return `
-    <section class="hero">
-      <div class="between">
-        <div class="stack" style="gap:2px">
-          <span class="t-label">Left to spend</span>
-          <span class="t-display">${money(b.left)}</span>
-          <span class="t-small">${money(b.used)} spent of ${money(b.total)}</span>
+    <section class="summary" aria-label="Monthly budget" style="gap:14px">
+      <div class="between"><b style="font-size:15px">Monthly Budget</b><b style="font-size:14px;color:${b.left < 0 ? 'var(--neg)' : 'var(--ink)'}">${entries.length ? `${money(Math.abs(b.left), true)} ${b.left < 0 ? 'over' : 'left'}` : ''}</b></div>
+      ${entries.length ? `
+      <div class="row" style="gap:16px;align-items:center">
+        ${pastelDonut(items, b.total, 'Budget by category')}
+        <div class="legend grow" style="min-width:0">
+          ${items.slice(0, 5).map((x, i) => `<div><i style="background:${PASTELS[i % PASTELS.length]}"></i><span class="ellipsis">${esc(CATEGORIES[x.c].label)}</span><b>${money(x.v, true)}</b></div>`).join('')}
+          ${items.length > 5 ? `<div><i style="background:#E9EBEF"></i><span>${items.length - 5} more</span></div>` : ''}
         </div>
-        ${ring(b.p, `${daysLeftInMonth()} days left`)}
       </div>
-      <div class="glass"><span class="t-small">Daily allowance until ${fmtDM(currentCycle().end)}</span><b style="font-size:16px">${money(perDay)}/day</b></div>
+      <div class="between t-small"><span>${money(b.used, true)} spent of ${money(b.total, true)}</span><span>${daysLeftInMonth()} days left · ${money(Math.max(0, b.left) / daysLeftInMonth(), true)}/day</span></div>`
+      : '<p class="t-small" style="margin:0">No budgets yet. Let the assistant suggest limits from your income, or add one yourself.</p>'}
     </section>
 
-    <button type="button" class="tile-btn" data-action="budget-assistant" style="background:var(--primary-50);border:0">
-      <span class="row" style="gap:12px"><span class="cat" style="background:var(--primary);color:#fff">${svg('sliders')}</span><span class="stack" style="gap:0"><span class="t-strong">Budget assistant</span><span class="t-small">Adjust every limit to the money you have now</span></span></span>
+    <button type="button" class="tile-btn" data-action="budget-assistant" style="background:var(--insight)">
+      <span class="row" style="gap:12px"><span class="cat" style="background:#fff;color:var(--primary)">${svg('spark')}</span><span class="stack" style="gap:0"><span class="t-strong">Budget assistant</span><span class="t-small">Adjust every limit to the money you have now</span></span></span>
       ${svg('chev', 'class="chev"')}
     </button>
 
-    ${budgetVsIncome(b)}
+    <div class="between" style="margin-bottom:-6px"><h2 style="font-size:16px;font-weight:600">Categories</h2><button type="button" class="icon-btn" data-action="add-budget" aria-label="Add a budget" style="width:36px;height:36px;border:0;background:none">${svg('plus')}</button></div>
+    ${entries.length ? entries.map(([cat, limit]) => {
+      const s = b.spent[cat] || 0, p = pct(s, limit), over = s > limit, c = CATEGORIES[cat];
+      const l = last[cat] || 0;
+      const ch = l ? Math.round(((s - l) / l) * 100) : null;
+      const tag = ch === null ? (state.budgetPct?.[cat] !== undefined ? `<span class="tag plain">${fmtPct(state.budgetPct[cat])}% of income</span>` : '')
+        : `<span class="tag ${ch > 0 ? 'bad' : 'good'}">${ch > 0 ? '+' : ''}${ch}% ${ch > 0 ? '↗' : '↘'}</span>`;
+      return `
+      <button type="button" class="bcard" data-action="edit-budget" data-id="${cat}" aria-label="${esc(c.label)}: ${idr(s)} of ${idr(limit)}">
+        <div class="row" style="gap:12px">${catTile(cat)}
+          <span class="stack grow" style="gap:0;min-width:0"><span class="t-small">${esc(c.label)}${state.budgetPct?.[cat] !== undefined && ch !== null ? ` · ${fmtPct(state.budgetPct[cat])}%` : ''}</span>
+            <span class="row" style="gap:8px"><b style="font-size:19px;letter-spacing:-0.5px;color:${over ? 'var(--neg)' : 'var(--ink)'}">${money(s)}</b>${tag}</span></span>
+        </div>
+        <div class="gbar${over ? ' over' : ''}"><i style="width:${Math.min(100, p)}%"></i></div>
+        <div class="between t-small"><span>${over ? `Over by ${money(s - limit, true)}` : `${money(limit - s, true)} left`}</span><span>${money(limit)}</span></div>
+      </button>`;
+    }).join('') : ''}
+    <button type="button" class="dashed-btn" data-action="add-budget">+ Add a budget</button>
 
     <button type="button" class="tile-btn" data-action="payments">
       <span class="row" style="gap:12px">${catTile('bills')}<span class="stack" style="gap:0"><span class="t-strong">Recurring payments</span><span class="t-small">${recurring ? `${recurring} marked` : 'Mark rent, bills and subscriptions'}</span></span></span>
       ${svg('chev', 'class="chev"')}
     </button>
 
-    <div class="section-head"><h2>Categories</h2></div>
-    <div class="list-card">
-      ${Object.keys(state.budgets).length ? '' : '<p class="empty">No budgets yet.<br>Add one for each category you want to keep an eye on.</p>'}
-      ${Object.entries(state.budgets).map(([cat, limit]) => {
-        const s = b.spent[cat] || 0, p = pct(s, limit), warn = p >= 90, c = CATEGORIES[cat] || CATEGORIES.other;
-        return `
-        <div class="tx" style="align-items:flex-start">
-          ${catTile(cat)}
-          <div class="meta" style="gap:6px">
-            <div class="between"><span class="name">${esc(c.label)}${state.budgetPct?.[cat] !== undefined ? ` <span class="t-small" style="color:var(--primary);font-weight:600">· ${fmtPct(state.budgetPct[cat])}% of income</span>` : ''}</span><b style="font-size:14px;color:${warn ? 'var(--neg)' : 'var(--ink)'}">${p}%</b></div>
-            ${bar(p, warn ? 'var(--neg)' : c.color)}
-            <div class="between"><span class="t-small">${idr(s)} of ${idr(limit)}</span><span class="t-small" style="color:${warn ? 'var(--neg)' : 'var(--muted)'};font-weight:${warn ? 600 : 400}">${s > limit ? `Over ${idrShort(s - limit)}` : `${idrShort(limit - s)} left`}</span></div>
-            <button type="button" class="view" data-action="edit-budget" data-id="${cat}">Edit budget</button>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-    <button type="button" class="dashed-btn" data-action="add-budget">+ Add a budget</button>`;
+    ${budgetVsIncome(b)}`;
 }
 
 function planGoals() {
@@ -815,23 +1223,6 @@ function matchesFilter(t, f) {
   if (f === 'recurring') return isRecurring(t);
   return t.cat === f;
 }
-function activityList() {
-  const q = activitySearch.trim().toLowerCase();
-  const f = state.prefs.catFilter;
-  const list = sortedTx(state.transactions).filter((t) => matchesFilter(t, f) &&
-    (!q || t.name.toLowerCase().includes(q) || (CATEGORIES[t.cat]?.label || '').toLowerCase().includes(q) || (t.note || '').toLowerCase().includes(q)));
-  if (!list.length) return `<p class="empty">${q ? 'No transactions match your search.' : 'Nothing here yet. Tap + to add a transaction.'}</p>`;
-  const groups = [];
-  for (const t of list) {
-    const last = groups[groups.length - 1];
-    if (last && last.date === t.date) last.items.push(t); else groups.push({ date: t.date, items: [t] });
-  }
-  return groups.map((g) => {
-    const label = shortDay(g.date);
-    const pretty = toDate(g.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-    return `<h3 class="day-head">${label}${label === pretty ? '' : `<small>${pretty}</small>`}</h3>${txList(g.items)}`;
-  }).join('');
-}
 
 /* =========================================================
    App bar
@@ -857,6 +1248,8 @@ function actionButton(kind) {
     case 'bell': return `<button type="button" class="icon-btn" data-action="notifications" aria-label="Notifications${alerts ? ` (${alerts})` : ''}">${svg('bell')}${alerts ? '<span class="badge"></span>' : ''}</button>`;
     case 'data': return `<button type="button" class="icon-btn" data-action="toggle-hide" aria-label="${state.prefs.hide ? 'Show' : 'Hide'} amounts">${svg(state.prefs.hide ? 'eyeOff' : 'eye')}</button>`;
     case 'calendar': return `<button type="button" class="icon-btn" data-action="toggle-hide" aria-label="${state.prefs.hide ? 'Show' : 'Hide'} amounts">${svg(state.prefs.hide ? 'eyeOff' : 'eye')}</button>`;
+    case 'tx-period': return `<label class="sr-only" for="tx-period">Period</label><select id="tx-period" class="select-pill">${[['weekly', 'Weekly'], ['monthly', 'Monthly']].map(([v, l]) => `<option value="${v}" ${(state.prefs.txPeriod || 'monthly') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    case 'analytics': return '<a href="#/stats" style="font-size:12px;color:var(--muted);text-decoration:none;white-space:nowrap">View Analytics</a>';
     case 'add-budget': return `<button type="button" class="icon-btn soft" data-action="add-budget" aria-label="Add budget">${svg('plus')}</button>`;
     case 'add-goal': return `<button type="button" class="icon-btn soft" data-action="add-goal" aria-label="Add goal">${svg('plus')}</button>`;
     default: return '';
@@ -864,11 +1257,18 @@ function actionButton(kind) {
 }
 
 function appbarHtml(page) {
+  if (page.header === 'assistant') {
+    const r = spendRoom();
+    return `
+      <button type="button" class="icon-btn" data-action="go-home" aria-label="Back to Home" style="border:0;background:none;width:32px">${svg('back')}</button>
+      <div class="appbar-title"><h1 style="font-size:17px">Assistant</h1><span class="sub">${r ? `${money(Math.max(0, r.left), true)} left · ` : ''}${daysLeftInMonth()} days to payday</span></div>
+      <span class="live">Ready</span>`;
+  }
   if (page.header === 'welcome') {
     return `
       <button type="button" class="avatar" data-action="data-menu" aria-label="Account and data" style="cursor:pointer"><span class="logo-n">n</span><span class="logo-dot"></span></button>
       <div class="appbar-title">${state.prefs.name
-        ? `<span class="hello">Welcome back</span><h1>${esc(state.prefs.name)}</h1>`
+        ? `<span class="hello">${greeting()}</span><h1>${esc(state.prefs.name)}!</h1>`
         : `<span class="hello">Welcome to</span><h1>Jon Pocket</h1>`}</div>
       <div class="appbar-action">
         <button type="button" class="icon-btn" data-action="refresh-app" aria-label="Refresh">${svg('reset')}</button>
@@ -904,6 +1304,9 @@ function render() {
     if (a.dataset.tab === currentTab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
 }
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'tx-period') { state.prefs.txPeriod = e.target.value; save(state); render(); }
+});
 window.addEventListener('hashchange', () => { closeSheet(); render(); view.scrollTop = 0; });
 
 /* =========================================================
@@ -1932,6 +2335,18 @@ const ACTIONS = {
     try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); } catch (e) { /* ignore */ }
     location.reload();
   },
+  'tx-type': (el) => { state.prefs.txType = el.dataset.value; save(state); document.querySelectorAll('[data-action="tx-type"]').forEach((b) => { if (b.closest('.chips')) b.setAttribute('aria-pressed', String(b.dataset.value === el.dataset.value)); }); refreshTxPage(); },
+  'set-tx-type': (el) => { state.prefs.txType = el.dataset.value; save(state); location.hash = '#/activity'; },
+  'tx-open': (el) => { openTx = openTx === el.dataset.id ? null : el.dataset.id; refreshTxPage(); },
+  'tx-filters': () => txFilterSheet(),
+  'tx-pocket': (el) => { state.prefs.pocketFilter = el.dataset.value; save(state); txFilterSheet(); refreshTxPage(); },
+  'tx-cat': (el) => { state.prefs.catFilter = el.dataset.value; save(state); txFilterSheet(); refreshTxPage(); },
+  'tx-clear-filters': () => { state.prefs.pocketFilter = 'all'; state.prefs.catFilter = 'all'; save(state); txFilterSheet(); refreshTxPage(); },
+  'hide-insight': (el) => { state.prefs.insightOff = el.dataset.value; save(state); render(); },
+  'go-assistant': () => { location.hash = '#/assistant'; },
+  'go-home': () => { location.hash = '#/home'; },
+  'ai-ask': (el) => { const q = AI_QUESTIONS.find(([id]) => id === el.dataset.value); if (q) aiAsk(q[0], q[2]); },
+  'ai-clear': () => { aiChat = []; render(); },
   'manage-pockets': managePockets,
   'open-pocket': (el) => openPocket(el.dataset.id),
   'add-pocket': () => pocketForm(null),
@@ -2039,6 +2454,12 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('submit', (e) => {
+  if (e.target.id === 'ai-form') {
+    e.preventDefault();
+    const q = $('#ai-input').value.trim();
+    if (q) aiAsk(aiIntent(q), q);
+    return;
+  }
   if (!sheetSubmit) return;
   e.preventDefault();
   sheetSubmit();
@@ -2399,13 +2820,14 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 const TOUR_KEY = 'jonpocket:tour';
 const TOUR = [
   { title: 'Welcome to Jon Pocket 👋', body: 'Jon Pocket helps you see where your money goes, keep spending under control and save for things that matter. This quick tour shows you around. It takes about a minute.' },
-  { route: '#/home', target: 'section.hero[aria-label="Balance"]', title: 'Your total balance', body: 'All your pockets added together. Below it you see this month’s income and expenses. Tap the eye icon at the top to hide amounts when someone is looking.' },
+  { route: '#/home', target: 'section[aria-label="Balance"]', title: 'Your total balance', body: 'All your pockets added together. Below it you see this month’s income and expenses. Tap the eye icon at the top to hide amounts when someone is looking.' },
   { route: '#/home', target: '.pocket-row', title: 'Pockets', body: 'Each bank account, e-wallet or cash wallet is a pocket. Tap one to set its balance to what your bank app shows. Add more with <b>Add pocket</b>, or rename and delete them with <b>Manage</b>.' },
   { target: '.tab-add', title: 'Add a transaction', body: 'Tap <b>+</b> any time to record an <b>expense</b>, <b>income</b> or a <b>transfer</b> between your pockets. Pick a category and the pocket it came from. Transfers don’t count as spending.' },
-  { route: '#/home', target: 'section[aria-label="Spent this month"]', title: 'Spent this month', body: 'Swipe left and right for three views: your budget, your spending pace by day, and which categories take the most money.' },
+  { route: '#/home', target: 'section[aria-label="Insights"], section[aria-label="Safe to spend"]', title: 'Insights and safe to spend', body: 'Jon Pocket compares this month with your usual spending and warns you early. The bar shows how much of your budget is already used.' },
   { route: '#/home', target: 'section[aria-label="Goals"]', title: 'Savings goals', body: 'Saving for a laptop, a trip or an emergency fund? Create a goal and link it to a pocket. The progress then follows that pocket’s balance by itself.' },
   { route: '#/activity', target: '.search-row', title: 'Find any transaction', body: 'Search by name or note. Tap a transaction’s <b>View Details</b> to edit or delete it.' },
-  { route: '#/activity', target: '.cat-grid', title: 'Filter and add categories', body: 'Tap a category to see only those transactions, or <b>Recurring</b> for regular bills. Missing one? Tap <b>Add</b> to make your own with its own icon and colour.' },
+  { route: '#/activity', target: '.chips', title: 'Filter transactions', body: 'Show only recurring payments, income, expenses or transfers. <b>Filters</b> lets you pick a pocket or category. Tap a transaction to see its details.' },
+{ route: '#/assistant', target: 'section[aria-label="Suggestions"]', title: 'Your assistant', body: 'Ask how much you can spend today, where your money went, or what bills are coming up. It answers from your own data.' },
   { route: '#/stats', target: '#view .card, #view section', title: 'Stats', body: 'See your spending by week, month or year, and which categories and sources of income are the biggest.' },
   { route: '#/plan/budgets', target: 'section[aria-label="Budget vs income"]', title: 'Budgets', body: 'Set a monthly limit for each category. This card compares the total you’ve budgeted with your income, so you know how much is left to save.' },
   { route: '#/plan/budgets', target: '[data-action="payments"]', title: 'Recurring payments', body: 'Mark rent, bills and subscriptions as recurring to see what you pay every month at a glance.' },
